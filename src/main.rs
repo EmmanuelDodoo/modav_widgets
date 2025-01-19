@@ -1,11 +1,10 @@
 #![allow(unused_imports, dead_code)]
 use iced::{
     application, font,
-    widget::{center, container, container::bordered_box, text, tooltip::Position, Tooltip},
-    Element, Font, Length, Renderer, Theme,
+    widget::{center, container, container::bordered_box, row, text, tooltip::Position, Tooltip},
+    Element, Font, Length, Theme,
 };
 
-use context::*;
 use menu::*;
 
 fn main() -> iced::Result {
@@ -14,73 +13,94 @@ fn main() -> iced::Result {
         .run_with(|| {
             let font = font::load(include_bytes!("../fontello.ttf")).map(|_| Message::None);
 
-            (App, font)
+            (App::new(), font)
         })
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Message {
+    Open,
+    Close,
     Test,
     None,
 }
 
-struct App;
+struct App {
+    open: bool,
+}
 
 impl App {
+    fn new() -> Self {
+        Self { open: false }
+    }
+
     fn update(&mut self, message: Message) {
         match message {
             Message::Test => println!("Testing"),
+            Message::Open => {
+                println!("Opening");
+                self.open = true
+            }
+            Message::Close => {
+                println!("Closing");
+                self.open = false;
+            }
             Message::None => {}
         }
     }
 
-    fn main<'a>() -> Vec<Item<'a, Message>> {
+    fn main<'a>() -> Section<'a, Message> {
         let font = Font::with_name("fontello");
 
         let one = {
             let icon = text("\u{F0F6}").font(font);
             let text = text("Example Menu");
-            Item::new(icon, text)
+            Item::new(icon, text).message(Message::Open)
         };
 
         let two: Item<'_, Message> = {
             let tip = "Some test tooltip";
-            //let icon = text("\u{F0F6}").font(font);
-            let tip = Tooltip::new("H", tip, Position::Right);
+            let icon = text("\u{F0F6}").font(font);
+            let tip = Tooltip::new(icon, tip, Position::Right);
 
             let text = text("Cringe Two");
             Item::with_tooltip(tip, text).message(Message::Test)
         };
+
         let three: Item<'_, Message> = {
             let icon = text("\u{F0F6}").font(font);
             let text = text("Example 3");
             Item::new(icon, text)
         };
+
         let four: Item<'_, Message> = {
             let icon = text("\u{F0F6}").font(font);
             let text = text("Example 3");
             Item::new(icon, text)
         };
+
         let five: Item<'_, Message> = {
             let icon = text("\u{F0F6}").font(font);
             let text = text("Example 3");
             Item::new(icon, text)
         };
+
         let six: Item<'_, Message> = {
             let icon = text("\u{F0F6}").font(font);
             let text = text("Example 3");
             Item::new(icon, text)
         };
+
         let seven: Item<'_, Message> = {
             let icon = text("\u{F0F6}").font(font);
             let text = text("Example 3");
             Item::new(icon, text)
         };
 
-        vec![one, two, three, four, five, six, seven]
+        section![one, two, three, four, five, six, seven]
     }
 
-    fn footer<'a>() -> Vec<Item<'a, Message>> {
+    fn footer<'a>() -> Section<'a, Message> {
         let font = Font::with_name("fontello");
 
         let one = {
@@ -100,7 +120,7 @@ impl App {
             Item::new(icon, text)
         };
 
-        vec![one, two, three]
+        section![one, two, three]
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -122,27 +142,41 @@ impl App {
             header
         };
 
-        let main: Section<'_, Message> = Section::from_vec(Self::main()).spacing(20.0);
-        let footer: Section<'_, Message> = Section::from_vec(Self::footer());
+        let main = Self::main().spacing(20.0);
+        let footer = Self::footer();
 
         let cols = Collapsible::new(header, main, footer);
         //let cols = Collapsible::no_header(main, footer);
         //let cols = Collapsible::no_footer(header, main);
         //let cols = Collapsible::only_main(main);
 
-        let temp: Element<'_, Message, Theme, Renderer> =
-            center(container(cols).style(bordered_box))
-                .center(Length::Fill)
-                .into();
+        let content = container(cols).style(bordered_box);
 
-        //temp.explain(color!(255, 0, 0))
-        temp
+        let context = container(
+            context!(text("one"), text( "two"), text("three"); Message::Close)
+                .spacing(100.0)
+                .height(Length::Fill),
+        )
+        .style(bordered_box);
+
+        let content: Element<'_, Message> = if self.open {
+            row!(content, context).into()
+        } else {
+            content.into()
+        };
+
+        center(content).center(Length::Fill).into()
     }
 }
 
 mod menu {
     use iced::{
-        advanced::{self, layout, renderer::Quad, widget::tree, Clipboard, Shell, Widget},
+        advanced::{
+            self, layout,
+            renderer::Quad,
+            widget::{tree, Operation},
+            Clipboard, Shell, Widget,
+        },
         alignment::{Horizontal, Vertical},
         event, mouse,
         widget::{Space, Text},
@@ -150,6 +184,7 @@ mod menu {
         Size, Theme, Vector,
     };
 
+    pub use context::Context;
     pub use items::Item;
     pub use sections::Section;
 
@@ -835,6 +870,228 @@ mod menu {
         }
     }
 
+    mod context {
+        use super::*;
+
+        /// A column widget that publishes a `Message` when there is a click
+        /// outside of its bounds
+        pub struct Context<'a, Message> {
+            width: Length,
+            height: Length,
+            spacing: f32,
+            padding: Padding,
+            align: Horizontal,
+            children: Vec<Element<'a, Message>>,
+            on_close: Message,
+        }
+
+        impl<'a, Message> Context<'a, Message> {
+            pub fn from_vec(children: Vec<Element<'a, Message>>, on_close: Message) -> Self {
+                Self {
+                    width: Length::Shrink,
+                    height: Length::Shrink,
+                    spacing: 0.0,
+                    padding: [20.0, 16.0].into(),
+                    align: Horizontal::Left,
+                    children,
+                    on_close,
+                }
+            }
+
+            pub fn width(mut self, width: impl Into<Length>) -> Self {
+                self.width = width.into();
+                self
+            }
+
+            pub fn height(mut self, height: impl Into<Length>) -> Self {
+                self.height = height.into();
+                self
+            }
+
+            pub fn spacing(mut self, spacing: f32) -> Self {
+                self.spacing = spacing;
+                self
+            }
+
+            pub fn padding(mut self, padding: impl Into<Padding>) -> Self {
+                self.padding = padding.into();
+                self
+            }
+
+            pub fn align(mut self, align: impl Into<Horizontal>) -> Self {
+                self.align = align.into();
+                self
+            }
+        }
+
+        impl<'a, Message> Widget<Message, Theme, Renderer> for Context<'a, Message>
+        where
+            Message: Clone,
+        {
+            fn children(&self) -> Vec<tree::Tree> {
+                self.children.iter().map(tree::Tree::new).collect()
+            }
+
+            fn diff(&self, tree: &mut tree::Tree) {
+                tree.diff_children(&self.children)
+            }
+
+            fn size(&self) -> Size<Length> {
+                Size {
+                    width: self.width,
+                    height: self.height,
+                }
+            }
+
+            fn mouse_interaction(
+                &self,
+                tree: &tree::Tree,
+                layout: layout::Layout<'_>,
+                cursor: mouse::Cursor,
+                viewport: &Rectangle,
+                renderer: &Renderer,
+            ) -> mouse::Interaction {
+                self.children
+                    .iter()
+                    .zip(&tree.children)
+                    .zip(layout.children())
+                    .map(|((child, state), layout)| {
+                        child
+                            .as_widget()
+                            .mouse_interaction(state, layout, cursor, viewport, renderer)
+                    })
+                    .max()
+                    .unwrap_or_default()
+            }
+
+            fn on_event(
+                &mut self,
+                tree: &mut tree::Tree,
+                event: Event,
+                layout: layout::Layout<'_>,
+                cursor: mouse::Cursor,
+                renderer: &Renderer,
+                clipboard: &mut dyn Clipboard,
+                shell: &mut Shell<'_, Message>,
+                viewport: &Rectangle,
+            ) -> event::Status {
+                if event == Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                    && !cursor.is_over(layout.bounds())
+                {
+                    shell.publish(self.on_close.clone())
+                }
+
+                self.children
+                    .iter_mut()
+                    .zip(&mut tree.children)
+                    .zip(layout.children())
+                    .map(|((child, state), layout)| {
+                        child.as_widget_mut().on_event(
+                            state,
+                            event.clone(),
+                            layout,
+                            cursor,
+                            renderer,
+                            clipboard,
+                            shell,
+                            viewport,
+                        )
+                    })
+                    .fold(event::Status::Ignored, event::Status::merge)
+            }
+
+            fn operate(
+                &self,
+                tree: &mut tree::Tree,
+                layout: layout::Layout<'_>,
+                renderer: &Renderer,
+                operation: &mut dyn Operation,
+            ) {
+                operation.container(None, layout.bounds(), &mut |operation| {
+                    self.children
+                        .iter()
+                        .zip(&mut tree.children)
+                        .zip(layout.children())
+                        .for_each(|((child, state), layout)| {
+                            child
+                                .as_widget()
+                                .operate(state, layout, renderer, operation);
+                        });
+                });
+            }
+
+            fn overlay<'b>(
+                &'b mut self,
+                tree: &'b mut tree::Tree,
+                layout: layout::Layout<'_>,
+                renderer: &Renderer,
+                translation: Vector,
+            ) -> Option<advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+                advanced::overlay::from_children(
+                    &mut self.children,
+                    tree,
+                    layout,
+                    renderer,
+                    translation,
+                )
+            }
+
+            fn layout(
+                &self,
+                tree: &mut tree::Tree,
+                renderer: &Renderer,
+                limits: &layout::Limits,
+            ) -> layout::Node {
+                layout::flex::resolve(
+                    layout::flex::Axis::Vertical,
+                    renderer,
+                    limits,
+                    self.width,
+                    self.height,
+                    self.padding,
+                    self.spacing,
+                    self.align.into(),
+                    &self.children,
+                    &mut tree.children,
+                )
+            }
+
+            fn draw(
+                &self,
+                tree: &tree::Tree,
+                renderer: &mut Renderer,
+                theme: &Theme,
+                style: &advanced::renderer::Style,
+                layout: layout::Layout<'_>,
+                cursor: mouse::Cursor,
+                viewport: &Rectangle,
+            ) {
+                if layout.bounds().intersection(viewport).is_none() {
+                    return;
+                }
+                for ((child, state), layout) in self
+                    .children
+                    .iter()
+                    .zip(&tree.children)
+                    .zip(layout.children())
+                {
+                    child
+                        .as_widget()
+                        .draw(state, renderer, theme, style, layout, cursor, viewport);
+                }
+            }
+        }
+
+        impl<'a, Message> From<Context<'a, Message>> for Element<'a, Message>
+        where
+            Message: Clone + 'a,
+        {
+            fn from(value: Context<'a, Message>) -> Self {
+                Self::new(value)
+            }
+        }
+    }
+
     #[derive(Debug, Clone, Copy)]
     enum Kind {
         NoHeader,
@@ -1199,6 +1456,18 @@ mod menu {
             }
         }
     }
+
+    #[macro_export]
+    macro_rules! context {
+            ($($child:expr),*; $message:expr) => {
+        Context::from_vec(vec![$(Element::from($child)),*], $message)
+    };
 }
 
-mod context {}
+    #[macro_export]
+    macro_rules! section {
+        ($($child:expr),*) => {
+        Section::from_vec(vec![$($child),*])
+    };
+    }
+}
