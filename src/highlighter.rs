@@ -342,15 +342,15 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
     let x = c * (1. - (((h / 60.0) % 2.0) - 1.0).abs());
     let m = l - (c / 2.);
 
-    let (r, g, b) = if 0. <= h && h < 60. {
+    let (r, g, b) = if (0.0..60.0).contains(&h) {
         (c, x, 0.)
-    } else if 60.0 <= h && h < 120. {
+    } else if (60.0..120.0).contains(&h) {
         (x, c, 0.)
-    } else if 120.0 <= h && h < 180. {
+    } else if (120.0..180.0).contains(&h) {
         (0., c, x)
-    } else if 180.0 <= h && h < 240. {
+    } else if (180.0..240.0).contains(&h) {
         (0., x, c)
-    } else if 240.0 <= h && h < 300. {
+    } else if (240.0..300.0).contains(&h) {
         (x, 0., c)
     } else {
         (c, 0., x)

@@ -66,7 +66,8 @@ impl App {
 
         text_editor(&self.content)
             .on_action(Message::Action)
-            .height(Length::Fill)
+            .width(100.0)
+            .height(Length::Shrink)
             .highlight_with::<CSVHighlighter>(self.theme.clone(), |hl, _theme| hl.into_format())
             .padding([4, 8])
             .into()
