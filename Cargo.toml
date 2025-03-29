@@ -1,5 +1,5 @@
 [package]
-name = "temp"
+name = "widgets"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,3 +12,6 @@ iced = { version = "0.13.1", features = [
 ] }
 
 syntect = { version = "5.2", features = [] }
+iced_graphics = "0.13.0"
+modav_core = { git = "ssh://github.com/EmmanuelDodoo/modav_core.git" }
+tokio = { version = "1.39.0", features = ["fs"] }
