@@ -1,5 +1,6 @@
 use iced::{mouse, Point, Rectangle, Size, Vector};
-use std::ops::Range;
+use std::collections::HashSet;
+use std::ops::RangeInclusive;
 
 #[derive(Debug, Clone, Copy)]
 pub enum State {
@@ -49,6 +50,10 @@ impl Cursor {
         self.state = State::Index(position);
     }
 
+    pub fn move_to_end(&mut self, value: &str) {
+        self.state = State::Index(value.len());
+    }
+
     pub fn move_left(&mut self, value: &str) {
         match self.state(value) {
             State::Index(idx) if idx > 0 => self.move_to(idx - 1),
@@ -76,6 +81,20 @@ impl Cursor {
                 start: start.min(end),
                 end: end.max(start),
             }
+        }
+    }
+
+    pub fn select_to_start(&mut self, value: &str) {
+        match self.state(value) {
+            State::Index(index) => self.select_range(0, index),
+            State::Selection { end, .. } => self.select_range(0, end),
+        }
+    }
+
+    pub fn select_to_end(&mut self, value: &str) {
+        match self.state(value) {
+            State::Index(index) => self.select_range(index, value.len()),
+            State::Selection { start, .. } => self.select_range(start, value.len()),
         }
     }
 
@@ -198,16 +217,222 @@ impl<'a> Editor<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Selection {
+pub enum Selection {
     Block {
-        rows: Range<usize>,
-        columns: Range<usize>,
+        rows: RangeInclusive<usize>,
+        columns: RangeInclusive<usize>,
     },
-    Scattered(Vec<usize>),
+    Scattered {
+        cells: HashSet<(usize, usize)>,
+        last: (usize, usize),
+    },
 }
 
 impl Selection {
-    //fn new(row: usize, )
+    pub fn new(row: usize, column: usize) -> Self {
+        Self::Block {
+            rows: row..=row,
+            columns: column..=column,
+        }
+    }
+
+    pub fn row(row: usize, column_len: usize) -> Self {
+        Self::Block {
+            rows: row..=row,
+            columns: 0..=column_len,
+        }
+    }
+
+    pub fn column(column: usize, limit: usize) -> Self {
+        Self::Block {
+            rows: 0..=limit,
+            columns: column..=column,
+        }
+    }
+
+    pub fn block(&mut self, row: usize, column: usize) {
+        match self {
+            Self::Block { rows, columns } => {
+                if !rows.contains(&row) {
+                    let start = *rows.start().min(&row);
+                    let end = *rows.end().max(&row);
+
+                    *rows = start..=end
+                }
+
+                if !columns.contains(&column) {
+                    let start = *columns.start().min(&column);
+                    let end = *columns.end().max(&column);
+
+                    *columns = start..=end
+                }
+            }
+            Self::Scattered { cells, last } => {
+                let rows = row.min(last.0)..=row.max(last.0);
+                let columns = (column.min(last.1)..=column.max(last.1)).collect::<Vec<usize>>();
+                *last = (row, column);
+
+                for row in rows {
+                    let set = columns.iter().map(|column| (row, *column));
+
+                    cells.extend(set);
+                }
+            }
+        }
+    }
+
+    pub fn scattered(&mut self, row: usize, column: usize) {
+        match self {
+            Self::Block { rows, columns } => {
+                let rows = rows.collect::<Vec<usize>>();
+                let columns = columns.collect::<Vec<usize>>();
+                let mut cells = HashSet::new();
+                cells.insert((row, column));
+
+                for row in rows {
+                    let set = columns.iter().map(|column| (row, *column));
+
+                    cells.extend(set)
+                }
+
+                *self = Self::Scattered {
+                    cells,
+                    last: (row, column),
+                }
+            }
+            Self::Scattered { cells, last } => {
+                cells.insert((row, column));
+                *last = (row, column)
+            }
+        }
+    }
+
+    pub fn contains(&self, row: usize, column: usize) -> bool {
+        match self {
+            Self::Block { rows, columns } => rows.contains(&row) && columns.contains(&column),
+            Self::Scattered { cells, .. } => cells.contains(&(row, column)),
+        }
+    }
+
+    pub fn border(&self, row: usize, column: usize) -> u8 {
+        match self {
+            Self::Block { rows, columns } => {
+                // bottom, right, top, left
+                let mut out = 0;
+
+                if !self.contains(row, column) {
+                    return 0;
+                }
+
+                if *rows.start() == row {
+                    // top
+                    out = out | (1 << 1);
+                }
+
+                if *rows.end() == row {
+                    // bottom
+                    out = out | (1 << 3);
+                }
+
+                if *columns.start() == column {
+                    // left
+                    out = out | (1 << 0);
+                }
+
+                if *columns.end() == column {
+                    // right
+                    out = out | (1 << 2);
+                }
+
+                out
+            }
+            Self::Scattered { cells, .. } => {
+                if cells.contains(&(row, column)) {
+                    return 15;
+                }
+
+                0
+            }
+        }
+    }
+
+    pub fn header(&self, column: usize) -> bool {
+        match self {
+            Self::Block { columns, .. } => columns.contains(&column),
+            Self::Scattered { cells, .. } => cells.iter().any(|(_, col)| *col == column),
+        }
+    }
+
+    pub fn move_to(&mut self, row: usize, column: usize) {
+        *self = Self::Block {
+            rows: row..=row,
+            columns: column..=column,
+        };
+    }
+
+    pub fn move_right(&mut self, column_limit: usize) {
+        match self {
+            Self::Block { columns, rows } => {
+                let row = *rows.start();
+                let column = (*columns.start() + 1).min(column_limit);
+
+                self.move_to(row, column);
+            }
+            Self::Scattered { last, .. } => {
+                let row = last.0;
+                let column = (last.1 + 1).min(column_limit);
+                self.move_to(row, column);
+            }
+        }
+    }
+
+    pub fn move_left(&mut self) {
+        match self {
+            Self::Block { columns, rows } => {
+                let row = *rows.start();
+                let column = columns.start().saturating_sub(1);
+
+                self.move_to(row, column);
+            }
+            Self::Scattered { last, .. } => {
+                let row = last.0;
+                let column = last.1.saturating_sub(1);
+                self.move_to(row, column);
+            }
+        }
+    }
+
+    pub fn move_down(&mut self, row_limit: usize) {
+        match self {
+            Self::Block { rows, columns } => {
+                let column = *columns.start();
+                let row = (*rows.start() + 1).min(row_limit);
+
+                self.move_to(row, column);
+            }
+            Self::Scattered { last, .. } => {
+                let column = last.1;
+                let row = (last.0 + 1).min(row_limit);
+                self.move_to(row, column)
+            }
+        }
+    }
+
+    pub fn move_up(&mut self) {
+        match self {
+            Self::Block { rows, columns } => {
+                let column = *columns.start();
+                let row = rows.start().saturating_sub(1);
+
+                self.move_to(row, column);
+            }
+            Self::Scattered { last, .. } => {
+                let column = last.1;
+                let row = last.0.saturating_sub(1);
+                self.move_to(row, column)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

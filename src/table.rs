@@ -380,19 +380,24 @@ impl Internal {
     fn reset(&mut self) {
         self.reset_resizing();
         self.reset_editing();
+        self.reset_selection();
+        self.last_click = None;
+        self.is_focused = None;
+        self.keyboard_modifiers = keyboard::Modifiers::default()
     }
 
     fn reset_editing(&mut self) {
-        self.is_focused = None;
         self.is_text_dragging = false;
-        self.last_click = None;
         self.editing = None;
         self.cursor = utils::Cursor::default();
-        self.keyboard_modifiers = keyboard::Modifiers::default()
     }
 
     fn reset_resizing(&mut self) {
         self.resizing = None;
+    }
+
+    fn reset_selection(&mut self) {
+        self.selection = None;
     }
 
     fn scroll_cells(&mut self, viewport: Size, offset: Vector) {
@@ -1177,6 +1182,27 @@ impl Internal {
                 .next()
                 .expect("Table draw: Pair node missing kind layout");
 
+            let is_selected = self
+                .selection
+                .as_ref()
+                .map(|selection| selection.header(idx))
+                .unwrap_or_default();
+
+            if is_selected {
+                let bounds = pair.bounds().expand([Self::CELL_GAP, Self::CELL_GAP]);
+
+                if let Some(clipped_viewport) = bounds.intersection(&viewport) {
+                    <Renderer as advanced::Renderer>::fill_quad(
+                        renderer,
+                        Quad {
+                            bounds: clipped_viewport,
+                            ..Default::default()
+                        },
+                        Background::Color(color!(85, 55, 15)),
+                    );
+                }
+            }
+
             if let Some(clipped_viewport) = pair.bounds().intersection(&viewport) {
                 <Renderer as advanced::Renderer>::fill_quad(
                     renderer,
@@ -1194,13 +1220,20 @@ impl Internal {
                     style,
                     label,
                     header.raw(),
-                    padding,
+                    Padding::from(0),
                     &label_viewport,
                 )
             }
 
             if let Some(kind_viewport) = knd.bounds().intersection(&viewport) {
-                draw(renderer, style, knd, kind.raw(), padding, &kind_viewport)
+                draw(
+                    renderer,
+                    style,
+                    knd,
+                    kind.raw(),
+                    Padding::from(0),
+                    &kind_viewport,
+                )
             }
 
             if let Some(Editing::Cell {
@@ -1210,7 +1243,7 @@ impl Internal {
             }) = &self.editing
             {
                 if idx == *index {
-                    editing.replace(label.bounds().shrink(padding));
+                    editing.replace(label.bounds());
                 }
             }
         }
@@ -1241,14 +1274,69 @@ impl Internal {
                     Background::Color(color!(205, 185, 75)),
                 );
 
+                let (row, column) = (idx % self.page_limit, idx / self.page_limit);
+
+                let (selection, is_selected) = self
+                    .selection
+                    .as_ref()
+                    .map(|selection| {
+                        (
+                            selection.border(row, column),
+                            selection.contains(row, column),
+                        )
+                    })
+                    .unwrap_or_default();
+
+                let selection = {
+                    let mut padding = Padding::ZERO;
+
+                    if ((selection >> 0) & 1) == 1 {
+                        padding = padding.left(Self::CELL_GAP);
+                    }
+
+                    if ((selection >> 1) & 1) == 1 {
+                        padding = padding.top(Self::CELL_GAP);
+                    }
+
+                    if ((selection >> 2) & 1) == 1 {
+                        padding = padding.right(Self::CELL_GAP);
+                    }
+
+                    if ((selection >> 3) & 1) == 1 {
+                        padding = padding.bottom(Self::CELL_GAP);
+                    }
+
+                    padding
+                };
+
+                if let Some(selection_viewport) =
+                    child.bounds().expand(selection).intersection(&viewport)
+                {
+                    <Renderer as advanced::Renderer>::fill_quad(
+                        renderer,
+                        Quad {
+                            bounds: selection_viewport,
+                            border: iced::Border::default().rounded(2.0),
+                            ..Default::default()
+                        },
+                        Background::Color(color!(185, 140, 90)),
+                    );
+                }
+
                 if let Some(clipped_viewport) = child.bounds().intersection(&clipped_viewport) {
+                    let color = if is_selected {
+                        color!(125, 155, 125)
+                    } else {
+                        color!(25, 155, 175)
+                    };
+
                     <Renderer as advanced::Renderer>::fill_quad(
                         renderer,
                         Quad {
                             bounds: clipped_viewport,
                             ..Default::default()
                         },
-                        Background::Color(color!(25, 155, 175)),
+                        Background::Color(color),
                     );
 
                     draw(
@@ -1355,7 +1443,7 @@ impl Internal {
                                 bounds: Rectangle {
                                     x: (clipped_bounds.x + text_value_width).floor(),
                                     y,
-                                    width: 1.5,
+                                    width: 1.0,
                                     height,
                                 },
                                 ..Quad::default()
@@ -1710,6 +1798,294 @@ impl Internal {
         mouse::Interaction::None
     }
 
+    fn update_cells_click(
+        &mut self,
+        layout: layout::Layout<'_>,
+        cursor: mouse::Cursor,
+        padding: Padding,
+    ) -> event::Status {
+        let mut children = layout.children();
+        let numbering = children
+            .next()
+            .expect("Widget Update: Missing numbering cells");
+
+        if let Some((idx, numbering)) = numbering
+            .children()
+            .enumerate()
+            .filter(|(idx, _)| *idx != 0)
+            .find(|(_, child)| cursor.is_over(child.bounds()))
+        {
+            let row = idx - 1;
+            let bounds = numbering.bounds();
+            // Guaranteed by the find above
+            let cursor_position = cursor.position_over(bounds).unwrap();
+            let click = mouse::Click::new(cursor_position, mouse::Button::Left, self.last_click);
+
+            self.last_click = Some(click);
+            self.reset_editing();
+            self.selection
+                .replace(Selection::row(row, self.cols.saturating_sub(1)));
+            return event::Status::Captured;
+        }
+
+        let headers = children
+            .next()
+            .expect("Widget Update: Missing header cells")
+            .children()
+            .map(|child| (true, child));
+        let cells = children
+            .next()
+            .expect("Widget Update: Missing cells")
+            .children()
+            .map(|child| (false, child));
+        let children = headers.chain(cells);
+
+        match children
+            .enumerate()
+            .find(|(_, (_, child))| cursor.is_over(child.bounds()))
+        {
+            Some((idx, (is_header, cell))) => {
+                let cell_bounds = cell.bounds();
+                let (cell, cursor_position) = if is_header {
+                    let pair = cell
+                        .children()
+                        .next()
+                        .expect("Table Update: Resize node missing pair layout");
+                    let cell = pair
+                        .children()
+                        .next()
+                        .expect("Table Update: Pair node missing label layout");
+                    (cell, cursor.position_over(pair.bounds()))
+                } else {
+                    let cell = cell
+                        .children()
+                        .next()
+                        .expect("Table Update: Resize node missing child layout");
+                    (cell, cursor.position_over(cell.bounds()))
+                };
+
+                let (row, column) = if is_header {
+                    (0, idx + 1)
+                } else {
+                    let idx = idx - self.cols;
+                    let column = (idx / self.page_limit) + 1;
+                    let row = (idx + 1) - ((idx / self.page_limit) * self.page_limit);
+                    (row, column)
+                };
+
+                let resize = Resizing::new(cell_bounds, cell.bounds(), cursor, row, column);
+
+                if resize.is_some() {
+                    self.resizing = resize;
+                    self.reset_editing();
+                    return event::Status::Captured;
+                }
+
+                let Some(cursor_position) = cursor_position else {
+                    return event::Status::Ignored;
+                };
+
+                let click =
+                    mouse::Click::new(cursor_position, mouse::Button::Left, self.last_click);
+
+                let (row, column) = if is_header {
+                    (0, idx)
+                } else {
+                    let idx = idx - self.cols;
+                    let column = idx / self.page_limit;
+                    let row = idx % self.page_limit;
+                    (row, column)
+                };
+
+                let cell_bounds = if is_header {
+                    cell.bounds()
+                } else {
+                    cell.bounds().shrink(padding)
+                };
+
+                let Some(cursor_position) = cursor.position_over(cell_bounds) else {
+                    return event::Status::Ignored;
+                };
+
+                let (idx, cell, value) = if is_header {
+                    let (cell, _) = &self.headers[idx];
+                    let col = self
+                        .raw
+                        .get_col(idx)
+                        .expect("Cells update: Missing column in sheet");
+
+                    let value = col.label().unwrap_or_default().to_owned();
+
+                    (idx, cell, value)
+                } else {
+                    let idx = idx - self.cols;
+                    let cell = &self.cells[idx];
+                    let (row, column) = (idx % self.page_limit, idx / self.page_limit);
+                    let row = row + (self.page * self.page_limit);
+
+                    let col = self
+                        .raw
+                        .get_col(column)
+                        .expect("Cells update: Missing column in sheet");
+
+                    let value = col.data_ref(row).map(cell_to_string).unwrap_or_default();
+
+                    (idx, cell, value)
+                };
+
+                let target = {
+                    let alignment_offset = alignment_offset(
+                        cell_bounds.width,
+                        cell.min_width(),
+                        cell.horizontal_alignment(),
+                    );
+
+                    cursor_position.x - cell_bounds.x - alignment_offset
+                };
+
+                match click.kind() {
+                    click::Kind::Single if self.keyboard_modifiers.shift() && !is_header => {
+                        self.last_click = Some(click);
+                        if let Some(selection) = self.selection.as_mut() {
+                            selection.block(row, column);
+                            self.reset_editing();
+                            return event::Status::Captured;
+                        }
+                    }
+                    click::Kind::Single if self.keyboard_modifiers.command() && !is_header => {
+                        self.last_click = Some(click);
+                        if let Some(selection) = self.selection.as_mut() {
+                            selection.scattered(row, column);
+                            self.reset_editing();
+                            return event::Status::Captured;
+                        }
+                    }
+                    click::Kind::Single if is_header => {
+                        self.last_click = Some(click);
+                        self.reset_editing();
+                        self.selection.replace(Selection::column(
+                            column,
+                            (self.page_limit * (self.page + 1)).saturating_sub(1),
+                        ));
+                        return event::Status::Captured;
+                    }
+                    click::Kind::Single if self.editing.is_some() => {
+                        // Needs to be in sync with kind::Double
+                        let position = if target > 0.0 {
+                            find_cursor_position(cell_bounds, &value, self, &cell, target)
+                        } else {
+                            None
+                        }
+                        .unwrap_or(0);
+
+                        if self.keyboard_modifiers.shift() {
+                            self.cursor
+                                .select_range(self.cursor.start(&value), position);
+                        } else {
+                            self.cursor.move_to(position);
+                        }
+
+                        self.is_text_dragging = true;
+
+                        self.last_click = Some(click);
+                        self.editing = Some(Editing::Cell {
+                            index: idx,
+                            value,
+                            is_header,
+                        });
+
+                        return event::Status::Captured;
+                    }
+                    click::Kind::Single => {
+                        self.last_click = Some(click);
+                        match &self.editing {
+                            Some(Editing::Cell {
+                                index,
+                                is_header: editing,
+                                ..
+                            }) if *editing == is_header && *index == idx => {}
+                            _ => self.reset_editing(),
+                        };
+                        self.selection.replace(Selection::new(row, column));
+                        return event::Status::Captured;
+                    }
+                    click::Kind::Double if self.editing.is_some() => {
+                        let position =
+                            find_cursor_position(cell_bounds, &value, self, cell, target)
+                                .unwrap_or(0);
+                        let (start, end) = word_boundary(&value, position);
+                        self.cursor.select_range(start, end);
+                        self.is_text_dragging = false;
+
+                        self.last_click = Some(click);
+                        self.editing = Some(Editing::Cell {
+                            index: idx,
+                            value,
+                            is_header,
+                        });
+                        return event::Status::Captured;
+                    }
+                    click::Kind::Double => {
+                        // Needs to be in sync with kind::Single
+                        // editing.is_some()
+                        let position = if target > 0.0 {
+                            find_cursor_position(cell_bounds, &value, self, &cell, target)
+                        } else {
+                            None
+                        }
+                        .unwrap_or(0);
+
+                        if self.keyboard_modifiers.shift() {
+                            self.cursor
+                                .select_range(self.cursor.start(&value), position);
+                        } else {
+                            self.cursor.move_to(position);
+                        }
+
+                        self.is_text_dragging = true;
+
+                        self.last_click = Some(click);
+                        self.editing = Some(Editing::Cell {
+                            index: idx,
+                            value,
+                            is_header,
+                        });
+
+                        return event::Status::Captured;
+                    }
+                    click::Kind::Triple if self.editing.is_some() => {
+                        self.cursor.select_all(&value);
+                        self.is_text_dragging = false;
+
+                        self.last_click = Some(click);
+                        self.editing = Some(Editing::Cell {
+                            index: idx,
+                            value,
+                            is_header,
+                        });
+
+                        return event::Status::Captured;
+                    }
+                    // todo!: Cannot realistically trigger this condition atm
+                    click::Kind::Triple => {
+                        self.last_click = Some(click);
+                        self.reset_editing();
+                        self.selection
+                            .replace(Selection::row(row, self.cols.saturating_sub(1)));
+                        return event::Status::Captured;
+                    }
+                }
+
+                return event::Status::Ignored;
+            }
+            None => {
+                self.reset();
+
+                return event::Status::Ignored;
+            }
+        }
+    }
+
     fn update_cells<Message>(
         &mut self,
         event: event::Event,
@@ -1723,6 +2099,14 @@ impl Internal {
     ) -> event::Status {
         if self.raw.is_empty() {
             return event::Status::Ignored;
+        }
+
+        if matches!(
+            &event,
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                | Event::Touch(touch::Event::FingerPressed { .. })
+        ) {
+            return self.update_cells_click(layout, cursor, padding);
         }
 
         match event {
@@ -1779,8 +2163,6 @@ impl Internal {
                             self.reset_editing();
                             return event::Status::Captured;
                         }
-
-                        let cell_bounds = cell.bounds().shrink(padding);
 
                         let Some(cursor_position) = cursor.position_over(cell_bounds) else {
                             return event::Status::Ignored;
@@ -2152,11 +2534,25 @@ impl Internal {
                         self.reset();
                         return event::Status::Captured;
                     }
-                    keyboard::Key::Named(
-                        keyboard::key::Named::Tab
-                        | keyboard::key::Named::ArrowUp
-                        | keyboard::key::Named::ArrowDown,
-                    ) => {
+                    keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                        if modifiers.shift() {
+                            self.cursor.select_to_start(value);
+                        } else {
+                            self.cursor.move_to(0);
+                        }
+
+                        return event::Status::Captured;
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                        if modifiers.shift() {
+                            self.cursor.select_to_end(value);
+                        } else {
+                            self.cursor.move_to_end(value);
+                        }
+
+                        return event::Status::Captured;
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
                         return event::Status::Ignored;
                     }
 
@@ -2754,6 +3150,28 @@ impl Internal {
 
                 self.scroll_cells(scroll_bounds, delta);
                 shell.invalidate_layout();
+                return event::Status::Captured;
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if self.editing.is_none() && self.selection.is_some() =>
+            {
+                let Some(selection) = self.selection.as_mut() else {
+                    return event::Status::Ignored;
+                };
+
+                match key {
+                    keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
+                        selection.move_right(self.cols.saturating_sub(1))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => selection.move_left(),
+                    keyboard::Key::Named(keyboard::key::Named::ArrowDown)
+                    | keyboard::Key::Named(keyboard::key::Named::Enter) => {
+                        selection.move_down(self.page_limit.saturating_sub(1))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowUp) => selection.move_up(),
+                    _ => return event::Status::Ignored,
+                }
+
                 return event::Status::Captured;
             }
             Event::Keyboard(keyboard::Event::KeyPressed { .. }) => match self.editing {
