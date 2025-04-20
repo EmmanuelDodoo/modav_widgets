@@ -1,4 +1,6 @@
-use iced::{color, mouse, Background, Border, Color, Point, Rectangle, Size, Theme, Vector};
+use iced::{
+    color, keyboard, mouse, Background, Border, Color, Point, Rectangle, Size, Theme, Vector,
+};
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
@@ -180,20 +182,20 @@ impl<'a> Editor<'a> {
         }
 
         self.value.insert(self.cursor.end(self.value), character);
-        self.cursor.move_right(&self.value)
+        self.cursor.move_right(self.value)
     }
 
     pub fn backspace(&mut self) {
-        match self.cursor.selection(&self.value) {
+        match self.cursor.selection(self.value) {
             Some((start, end)) => {
                 self.cursor.move_left(self.value);
                 self.value.replace_range(start..end, "");
             }
             None => {
-                let start = self.cursor.start(&self.value);
+                let start = self.cursor.start(self.value);
 
                 if start > 0 {
-                    self.cursor.move_left(&self.value);
+                    self.cursor.move_left(self.value);
                     self.value.remove(start - 1);
                 }
             }
@@ -201,12 +203,12 @@ impl<'a> Editor<'a> {
     }
 
     pub fn delete(&mut self) {
-        match self.cursor.selection(&self.value) {
+        match self.cursor.selection(self.value) {
             Some(_) => {
                 self.backspace();
             }
             None => {
-                let end = self.cursor.end(&self.value);
+                let end = self.cursor.end(self.value);
 
                 if end < self.value.len() {
                     self.value.remove(end);
@@ -217,11 +219,14 @@ impl<'a> Editor<'a> {
 }
 
 #[derive(Debug, Clone)]
+/// A group of selected cells.
 pub enum Selection {
+    /// A continuous selection.
     Block {
         rows: RangeInclusive<usize>,
         columns: RangeInclusive<usize>,
     },
+    /// A selection which is not necessarily continguous.
     Scattered {
         cells: HashSet<(usize, usize)>,
         last: (usize, usize),
@@ -229,28 +234,28 @@ pub enum Selection {
 }
 
 impl Selection {
-    pub fn new(row: usize, column: usize) -> Self {
+    pub(super) fn new(row: usize, column: usize) -> Self {
         Self::Block {
             rows: row..=row,
             columns: column..=column,
         }
     }
 
-    pub fn row(row: usize, column_len: usize) -> Self {
+    pub(super) fn row(row: usize, column_len: usize) -> Self {
         Self::Block {
             rows: row..=row,
             columns: 0..=column_len,
         }
     }
 
-    pub fn column(column: usize, limit: usize) -> Self {
+    pub(super) fn column(column: usize, limit: usize) -> Self {
         Self::Block {
             rows: 0..=limit,
             columns: column..=column,
         }
     }
 
-    pub fn block(&mut self, row: usize, column: usize) {
+    pub(super) fn block(&mut self, row: usize, column: usize) {
         match self {
             Self::Block { rows, columns } => {
                 if !rows.contains(&row) {
@@ -281,7 +286,7 @@ impl Selection {
         }
     }
 
-    pub fn scattered(&mut self, row: usize, column: usize) {
+    pub(super) fn scattered(&mut self, row: usize, column: usize) {
         match self {
             Self::Block { rows, columns } => {
                 let rows = rows.collect::<Vec<usize>>();
@@ -307,14 +312,14 @@ impl Selection {
         }
     }
 
-    pub fn contains(&self, row: usize, column: usize) -> bool {
+    pub(super) fn contains(&self, row: usize, column: usize) -> bool {
         match self {
             Self::Block { rows, columns } => rows.contains(&row) && columns.contains(&column),
             Self::Scattered { cells, .. } => cells.contains(&(row, column)),
         }
     }
 
-    pub fn border(&self, row: usize, column: usize) -> u8 {
+    pub(super) fn border(&self, row: usize, column: usize) -> u8 {
         match self {
             Self::Block { rows, columns } => {
                 // bottom, right, top, left
@@ -326,22 +331,22 @@ impl Selection {
 
                 if *rows.start() == row {
                     // top
-                    out = out | (1 << 1);
+                    out |= 1 << 1;
                 }
 
                 if *rows.end() == row {
                     // bottom
-                    out = out | (1 << 3);
+                    out |= 1 << 3;
                 }
 
                 if *columns.start() == column {
                     // left
-                    out = out | (1 << 0);
+                    out |= 1 << 0;
                 }
 
                 if *columns.end() == column {
                     // right
-                    out = out | (1 << 2);
+                    out |= 1 << 2;
                 }
 
                 out
@@ -356,21 +361,21 @@ impl Selection {
         }
     }
 
-    pub fn header(&self, column: usize) -> bool {
+    pub(super) fn header(&self, column: usize) -> bool {
         match self {
             Self::Block { columns, .. } => columns.contains(&column),
             Self::Scattered { cells, .. } => cells.iter().any(|(_, col)| *col == column),
         }
     }
 
-    pub fn move_to(&mut self, row: usize, column: usize) {
+    pub(super) fn move_to(&mut self, row: usize, column: usize) {
         *self = Self::Block {
             rows: row..=row,
             columns: column..=column,
         };
     }
 
-    pub fn move_right(&mut self, column_limit: usize) {
+    pub(super) fn move_right(&mut self, column_limit: usize) {
         match self {
             Self::Block { columns, rows } => {
                 let row = *rows.start();
@@ -386,7 +391,7 @@ impl Selection {
         }
     }
 
-    pub fn move_left(&mut self) {
+    pub(super) fn move_left(&mut self) {
         match self {
             Self::Block { columns, rows } => {
                 let row = *rows.start();
@@ -402,7 +407,7 @@ impl Selection {
         }
     }
 
-    pub fn move_down(&mut self, row_limit: usize) {
+    pub(super) fn move_down(&mut self, row_limit: usize) {
         match self {
             Self::Block { rows, columns } => {
                 let column = *columns.start();
@@ -418,7 +423,7 @@ impl Selection {
         }
     }
 
-    pub fn move_up(&mut self) {
+    pub(super) fn move_up(&mut self) {
         match self {
             Self::Block { rows, columns } => {
                 let column = *columns.start();
@@ -433,6 +438,62 @@ impl Selection {
             }
         }
     }
+
+    pub(super) fn grow(
+        &mut self,
+        row_amt: usize,
+        row_limit: usize,
+        column_amt: usize,
+        column_limit: usize,
+    ) {
+        if let Self::Block { rows, columns } = self {
+            let end = (*rows.end() + row_amt).min(row_limit);
+            *rows = *rows.start()..=end;
+
+            let end = (*columns.end() + column_amt).min(column_limit);
+            *columns = *columns.start()..=end;
+        }
+    }
+
+    pub(super) fn shrink(&mut self, row_amt: usize, column_amt: usize) {
+        if let Self::Block { rows, columns } = self {
+            let end = *rows.end();
+            if end == 0 {
+                return;
+            }
+            let end = (end - row_amt).max(*rows.start());
+
+            *rows = *rows.start()..=end;
+
+            let end = *columns.end();
+            if end == 0 {
+                return;
+            }
+            let end = (end - column_amt).max(*columns.start());
+
+            *columns = *columns.start()..=end;
+        }
+    }
+
+    /// Returns the `(row, column)` indices for each unique cell in the [`Selection`].
+    pub fn list(&self) -> HashSet<(usize, usize)> {
+        match self {
+            Self::Block { rows, columns } => {
+                let mut cells = HashSet::new();
+                let rows = rows.clone().collect::<Vec<usize>>();
+                let columns = columns.clone().collect::<Vec<usize>>();
+
+                for row in rows {
+                    let set = columns.iter().map(|column| (row, *column));
+
+                    cells.extend(set)
+                }
+
+                cells
+            }
+            Self::Scattered { cells, .. } => cells.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -443,15 +504,15 @@ enum Drag {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Resizing {
+pub(super) struct Resizing {
     kind: Drag,
     cursor: Point,
-    pub(crate) row: usize,
-    pub(crate) column: usize,
+    pub(super) row: usize,
+    pub(super) column: usize,
 }
 
 impl Resizing {
-    pub(crate) fn new(
+    pub(super) fn new(
         parent: Rectangle,
         child: Rectangle,
         cursor: mouse::Cursor,
@@ -497,7 +558,7 @@ impl Resizing {
     }
 
     /// Returns the new minimum dimensions after a drag
-    pub(crate) fn drag(&mut self, position: Point, width: f32, height: f32) -> (Size, Vector) {
+    pub(super) fn drag(&mut self, position: Point, width: f32, height: f32) -> (Size, Vector) {
         let diff = position - self.cursor;
         self.cursor = position;
 
@@ -521,7 +582,7 @@ impl Resizing {
         }
     }
 
-    pub(crate) fn interaction(self) -> mouse::Interaction {
+    pub(super) fn interaction(self) -> mouse::Interaction {
         match self.kind {
             Drag::Vertical => mouse::Interaction::ResizingVertically,
             Drag::Horizontal => mouse::Interaction::ResizingHorizontally,
@@ -530,128 +591,13 @@ impl Resizing {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Style {
-    pub background: Option<Background>,
-    pub goto_page_text: Color,
-    pub border: Border,
-    pub status_text_color: Color,
-    pub header_text_color: Color,
-    pub header_type_color: Color,
-    pub goto_text_color: Color,
-    pub hovered_goto_text_color: Color,
-    pub goto_input_text_color: Color,
-    pub pagination_text_color: Color,
-    pub hovered_pagination_text_color: Color,
-    pub page_text_color: Color,
-    pub hovered_page_text_color: Color,
-    pub selected_page_text_color: Color,
-    pub cursor_color: Color,
-    pub cursor_selection: Color,
-    pub alternating_backgrounds: (Background, Background),
-    pub alternating_text_color: (Color, Color),
-    pub selected_header_background: Background,
-    pub header_background: Background,
-    pub selected_cell_border: Background,
-    pub selected_cell_background: Background,
-    pub cell_border: Background,
-    pub status_background: Background,
-    pub goto_border: Border,
-    pub goto_background: Background,
-    pub hovered_goto_background: Background,
-    pub goto_input_background: Background,
-    pub pagination_border: Border,
-    pub pagination_background: Background,
-    pub hovered_pagination_background: Background,
-    pub page_border: Border,
-    pub page_background: Background,
-    pub hovered_page_background: Background,
-    pub selected_page_background: Background,
-}
-
-pub trait Catalog {
-    type Class<'a>;
-
-    fn default<'a>() -> Self::Class<'a>;
-
-    fn style(&self, class: &Self::Class<'_>) -> Style;
-}
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
-
-impl Catalog for Theme {
-    type Class<'a> = StyleFn<'a, Self>;
-
-    fn default<'a>() -> Self::Class<'a> {
-        Box::new(default)
-    }
-
-    fn style(&self, class: &Self::Class<'_>) -> Style {
-        class(self)
-    }
-}
-
-pub fn default(theme: &Theme) -> Style {
-    let palette = theme.extended_palette();
-    let background = palette.background.weak;
-    let status_background = palette.secondary.weak;
-    let header_background = palette.secondary.base;
-    let goto_background = palette.secondary.weak;
-    let goto_hovered = palette.secondary.strong;
-    let goto_input_background = palette.background.strong;
-    let pagination_background = goto_background;
-    let pagination_hovered = goto_hovered;
-    let page_background = goto_background;
-    let hovered_page = goto_hovered;
-    let selected_page = palette.primary.weak;
-
-    let (alt1, alt2) = (palette.secondary.weak, palette.secondary.strong);
-
-    let cursor = palette.primary.strong;
-    let rounded = Border::default().rounded(3.0);
-
-    Style {
-        background: Some(Background::Color(background.color)),
-        border: Border::default(),
-
-        status_text_color: status_background.text,
-        status_background: Background::Color(status_background.color.scale_alpha(0.5)),
-
-        header_background: Background::Color(header_background.color),
-        header_text_color: header_background.text,
-        header_type_color: header_background.text,
-        selected_header_background: Background::Color(palette.primary.strong.color),
-
-        goto_background: Background::Color(goto_background.color),
-        goto_page_text: background.text,
-        goto_text_color: goto_background.text,
-        hovered_goto_background: Background::Color(goto_hovered.color),
-        hovered_goto_text_color: goto_hovered.text,
-        goto_input_background: Background::Color(goto_input_background.color),
-        goto_input_text_color: goto_input_background.text,
-        goto_border: rounded,
-
-        pagination_background: Background::Color(pagination_background.color),
-        pagination_text_color: pagination_background.text,
-        hovered_pagination_background: Background::Color(pagination_hovered.color),
-        hovered_pagination_text_color: pagination_hovered.text,
-        pagination_border: rounded,
-
-        page_background: Background::Color(page_background.color),
-        page_text_color: page_background.text,
-        hovered_page_background: Background::Color(hovered_page.color),
-        hovered_page_text_color: hovered_page.text,
-        selected_page_background: Background::Color(selected_page.color),
-        selected_page_text_color: selected_page.text,
-        page_border: rounded,
-
-        cursor_color: cursor.color,
-        cursor_selection: cursor.color.scale_alpha(0.5),
-
-        alternating_text_color: (alt1.text, alt2.text),
-        alternating_backgrounds: (Background::Color(alt1.color), Background::Color(alt2.color)),
-        cell_border: Background::Color(palette.primary.weak.color),
-        selected_cell_border: Background::Color(palette.primary.strong.color),
-        selected_cell_background: Background::Color(palette.primary.weak.color.scale_alpha(0.40)),
-    }
+#[derive(Debug, Clone, PartialEq)]
+/// A key press.
+pub struct KeyPress {
+    /// The key pressed.
+    pub key: keyboard::Key,
+    /// The state of the keyboard modifiers.
+    pub modifiers: keyboard::Modifiers,
+    /// The text produced by the key press.
+    pub text: Option<String>,
 }
