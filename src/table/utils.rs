@@ -1,4 +1,4 @@
-use iced::{mouse, Point, Rectangle, Size, Vector};
+use iced::{color, mouse, Background, Border, Color, Point, Rectangle, Size, Theme, Vector};
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
@@ -527,5 +527,131 @@ impl Resizing {
             Drag::Horizontal => mouse::Interaction::ResizingHorizontally,
             Drag::Diagonal => mouse::Interaction::ResizingDiagonallyDown,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Style {
+    pub background: Option<Background>,
+    pub goto_page_text: Color,
+    pub border: Border,
+    pub status_text_color: Color,
+    pub header_text_color: Color,
+    pub header_type_color: Color,
+    pub goto_text_color: Color,
+    pub hovered_goto_text_color: Color,
+    pub goto_input_text_color: Color,
+    pub pagination_text_color: Color,
+    pub hovered_pagination_text_color: Color,
+    pub page_text_color: Color,
+    pub hovered_page_text_color: Color,
+    pub selected_page_text_color: Color,
+    pub cursor_color: Color,
+    pub cursor_selection: Color,
+    pub alternating_backgrounds: (Background, Background),
+    pub alternating_text_color: (Color, Color),
+    pub selected_header_background: Background,
+    pub header_background: Background,
+    pub selected_cell_border: Background,
+    pub selected_cell_background: Background,
+    pub cell_border: Background,
+    pub status_background: Background,
+    pub goto_border: Border,
+    pub goto_background: Background,
+    pub hovered_goto_background: Background,
+    pub goto_input_background: Background,
+    pub pagination_border: Border,
+    pub pagination_background: Background,
+    pub hovered_pagination_background: Background,
+    pub page_border: Border,
+    pub page_background: Background,
+    pub hovered_page_background: Background,
+    pub selected_page_background: Background,
+}
+
+pub trait Catalog {
+    type Class<'a>;
+
+    fn default<'a>() -> Self::Class<'a>;
+
+    fn style(&self, class: &Self::Class<'_>) -> Style;
+}
+
+pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
+
+impl Catalog for Theme {
+    type Class<'a> = StyleFn<'a, Self>;
+
+    fn default<'a>() -> Self::Class<'a> {
+        Box::new(default)
+    }
+
+    fn style(&self, class: &Self::Class<'_>) -> Style {
+        class(self)
+    }
+}
+
+pub fn default(theme: &Theme) -> Style {
+    let palette = theme.extended_palette();
+    let background = palette.background.weak;
+    let status_background = palette.secondary.weak;
+    let header_background = palette.secondary.base;
+    let goto_background = palette.secondary.weak;
+    let goto_hovered = palette.secondary.strong;
+    let goto_input_background = palette.background.strong;
+    let pagination_background = goto_background;
+    let pagination_hovered = goto_hovered;
+    let page_background = goto_background;
+    let hovered_page = goto_hovered;
+    let selected_page = palette.primary.weak;
+
+    let (alt1, alt2) = (palette.secondary.weak, palette.secondary.strong);
+
+    let cursor = palette.primary.strong;
+    let rounded = Border::default().rounded(3.0);
+
+    Style {
+        background: Some(Background::Color(background.color)),
+        border: Border::default(),
+
+        status_text_color: status_background.text,
+        status_background: Background::Color(status_background.color.scale_alpha(0.5)),
+
+        header_background: Background::Color(header_background.color),
+        header_text_color: header_background.text,
+        header_type_color: header_background.text,
+        selected_header_background: Background::Color(palette.primary.strong.color),
+
+        goto_background: Background::Color(goto_background.color),
+        goto_page_text: background.text,
+        goto_text_color: goto_background.text,
+        hovered_goto_background: Background::Color(goto_hovered.color),
+        hovered_goto_text_color: goto_hovered.text,
+        goto_input_background: Background::Color(goto_input_background.color),
+        goto_input_text_color: goto_input_background.text,
+        goto_border: rounded,
+
+        pagination_background: Background::Color(pagination_background.color),
+        pagination_text_color: pagination_background.text,
+        hovered_pagination_background: Background::Color(pagination_hovered.color),
+        hovered_pagination_text_color: pagination_hovered.text,
+        pagination_border: rounded,
+
+        page_background: Background::Color(page_background.color),
+        page_text_color: page_background.text,
+        hovered_page_background: Background::Color(hovered_page.color),
+        hovered_page_text_color: hovered_page.text,
+        selected_page_background: Background::Color(selected_page.color),
+        selected_page_text_color: selected_page.text,
+        page_border: rounded,
+
+        cursor_color: cursor.color,
+        cursor_selection: cursor.color.scale_alpha(0.5),
+
+        alternating_text_color: (alt1.text, alt2.text),
+        alternating_backgrounds: (Background::Color(alt1.color), Background::Color(alt2.color)),
+        cell_border: Background::Color(palette.primary.weak.color),
+        selected_cell_border: Background::Color(palette.primary.strong.color),
+        selected_cell_background: Background::Color(palette.primary.weak.color.scale_alpha(0.40)),
     }
 }

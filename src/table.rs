@@ -13,7 +13,7 @@ use iced::{
     color, event, font, keyboard,
     time::{Duration, Instant},
     touch,
-    widget::{Scrollable, TextInput},
+    widget::{Button, Scrollable, TextInput},
     window, Background, Border, Color, Element, Event, Font, Length, Padding, Pixels, Point,
     Rectangle, Renderer, Size, Theme, Vector,
 };
@@ -24,18 +24,21 @@ use modav_core::repr::{
 };
 
 mod utils;
-use utils::{Editor, Resizing, Selection};
+use utils::{Catalog, Editor, Resizing, Selection, Style};
 
 const BACK: &str = "‹ Back";
 const NEXT: &str = "Next ›";
-const GOTO_PAGE: &str = "Page";
+const GOTO_PAGE: &str = "Page:";
 const GOTO_GO: &str = "Go";
 const PAGINATION_ELLIPSIS: &str = "•••";
 const CURSOR_BLINK_INTERVAL_MILLIS: u128 = 500;
 
 type Cell = Plain<iced_graphics::text::Paragraph>;
 
-pub struct Table {
+pub struct Table<'a, Theme>
+where
+    Theme: Catalog,
+{
     config: Config<String>,
     width: Length,
     height: Length,
@@ -44,9 +47,18 @@ pub struct Table {
     spacing: f32,
     padding: Padding,
     cell_padding: Padding,
+    class: Theme::Class<'a>, // page limit
+                             // on selection (block scattered)
+                             // on input
+                             // on submit
+                             // on resize???
+                             // on scroll???
 }
 
-impl Table {
+impl<'a, Theme> Table<'a, Theme>
+where
+    Theme: Catalog,
+{
     pub fn new(config: Config<String>) -> Self {
         Self {
             config,
@@ -57,6 +69,7 @@ impl Table {
             cell_padding: [2, 5].into(),
             font: Font::default(),
             spacing: 20.0,
+            class: Theme::default(),
         }
     }
 
@@ -89,9 +102,17 @@ impl Table {
         self.cell_padding = padding.into();
         self
     }
+
+    pub fn class(mut self, class: impl Into<Theme::Class<'a>>) -> Self {
+        self.class = class.into();
+        self
+    }
 }
 
-impl<Message> Widget<Message, Theme, Renderer> for Table {
+impl<'a, Message, Theme> Widget<Message, Theme, Renderer> for Table<'a, Theme>
+where
+    Theme: Catalog,
+{
     fn tag(&self) -> Tag {
         Tag::of::<State>()
     }
@@ -123,34 +144,39 @@ impl<Message> Widget<Message, Theme, Renderer> for Table {
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        _theme: &Theme,
-        style: &iced::advanced::renderer::Style,
+        theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
         layout: iced::advanced::Layout<'_>,
-        _cursor: iced::advanced::mouse::Cursor,
+        cursor: iced::advanced::mouse::Cursor,
         viewport: &iced::Rectangle,
     ) {
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
-        //let style = theme.style(&self.class);
+        let style = theme.style(&self.class);
 
         let Some(clipped_viewport) = bounds.intersection(viewport) else {
             return;
         };
 
-        <Renderer as advanced::Renderer>::fill_quad(
-            renderer,
-            Quad {
-                bounds,
-                ..Default::default()
-            },
-            Background::Color(color!(105, 135, 141)),
-        );
+        if style.background.is_some() || style.border.width > 0.0 {
+            <Renderer as advanced::Renderer>::fill_quad(
+                renderer,
+                Quad {
+                    bounds,
+                    border: style.border,
+                    ..Default::default()
+                },
+                style
+                    .background
+                    .unwrap_or(Background::Color(Color::TRANSPARENT)),
+            );
+        }
 
         match state {
             State::Invalid { message, .. } => {
                 draw(
                     renderer,
-                    style,
+                    style.status_text_color,
                     layout,
                     message.raw(),
                     self.padding,
@@ -164,6 +190,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Table {
                 self.padding,
                 self.cell_padding,
                 self.spacing,
+                cursor,
                 &clipped_viewport.shrink(self.padding),
             ),
         }
@@ -219,11 +246,12 @@ impl<Message> Widget<Message, Theme, Renderer> for Table {
     }
 }
 
-impl<'a, Message> From<Table> for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme> From<Table<'a, Theme>> for Element<'a, Message, Theme, Renderer>
 where
     Message: 'a,
+    Theme: Catalog + 'a,
 {
-    fn from(value: Table) -> Self {
+    fn from(value: Table<'a, Theme>) -> Self {
         Element::new(value)
     }
 }
@@ -773,8 +801,7 @@ impl Internal {
         ));
 
         let min_bounds = max.min_bounds();
-        let input =
-            Size::new(min_bounds.width.max(35.0), min_bounds.height).expand(self.pages_padding);
+        let input = Size::new(min_bounds.width + 5.0, min_bounds.height).expand(self.pages_padding);
 
         let mut offset = 0.0;
 
@@ -894,29 +921,37 @@ impl Internal {
         &self,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
-        style: &iced::advanced::renderer::Style,
+        style: Style,
+        cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
         for ((cell, content), layout) in self.paginations.iter().zip(layout.children()) {
             let bounds = layout.bounds();
-            let color = if (self.page + 1).to_string() != *content {
-                color!(25, 155, 175)
+            let (background, text_color) = if (self.page + 1).to_string() == *content {
+                (
+                    style.selected_page_background,
+                    style.selected_page_text_color,
+                )
+            } else if cursor.is_over(bounds) {
+                (style.hovered_page_background, style.hovered_page_text_color)
             } else {
-                color!(195, 205, 205)
+                (style.page_background, style.page_text_color)
             };
+
             if let Some(clipped_viewport) = bounds.intersection(viewport) {
                 <Renderer as advanced::Renderer>::fill_quad(
                     renderer,
                     Quad {
                         bounds: clipped_viewport,
+                        border: style.page_border,
                         ..Default::default()
                     },
-                    Background::Color(color),
+                    background,
                 );
 
                 draw(
                     renderer,
-                    style,
+                    text_color,
                     layout,
                     cell.raw(),
                     self.pages_padding,
@@ -930,24 +965,41 @@ impl Internal {
         &self,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
-        style: &iced::advanced::renderer::Style,
+        style: Style,
+        cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
         let mut children = layout.children();
         {
             let back = children.next().expect("Missing paginations: Back");
+
+            let (background, text_color) = if self.page == 0 {
+                (
+                    style.pagination_background.scale_alpha(0.5),
+                    style.pagination_text_color.scale_alpha(0.5),
+                )
+            } else if cursor.is_over(back.bounds()) {
+                (
+                    style.hovered_pagination_background,
+                    style.hovered_pagination_text_color,
+                )
+            } else {
+                (style.pagination_background, style.pagination_text_color)
+            };
+
             if let Some(bounds) = back.bounds().intersection(viewport) {
                 <Renderer as advanced::Renderer>::fill_quad(
                     renderer,
                     Quad {
                         bounds,
+                        border: style.pagination_border,
                         ..Default::default()
                     },
-                    Background::Color(color!(25, 155, 175)),
+                    background,
                 );
                 draw(
                     renderer,
-                    style,
+                    text_color,
                     back,
                     self.page_back.raw(),
                     self.pages_padding,
@@ -958,22 +1010,38 @@ impl Internal {
 
         let pages = children.next().expect("Missing paginations: Pages");
 
-        self.draw_pages(renderer, pages, style, viewport);
+        self.draw_pages(renderer, pages, style, cursor, viewport);
 
         {
             let next = children.next().expect("Missing paginations: Next");
+
+            let (background, text_color) = if self.page == self.pages_end() {
+                (
+                    style.pagination_background.scale_alpha(0.5),
+                    style.pagination_text_color.scale_alpha(0.5),
+                )
+            } else if cursor.is_over(next.bounds()) {
+                (
+                    style.hovered_pagination_background,
+                    style.hovered_pagination_text_color,
+                )
+            } else {
+                (style.pagination_background, style.pagination_text_color)
+            };
+
             if let Some(bounds) = next.bounds().intersection(viewport) {
                 <Renderer as advanced::Renderer>::fill_quad(
                     renderer,
                     Quad {
                         bounds,
+                        border: style.pagination_border,
                         ..Default::default()
                     },
-                    Background::Color(color!(25, 155, 175)),
+                    background,
                 );
                 draw(
                     renderer,
-                    style,
+                    text_color,
                     next,
                     self.page_next.raw(),
                     self.pages_padding,
@@ -987,7 +1055,8 @@ impl Internal {
         &self,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
-        style: &iced::advanced::renderer::Style,
+        style: Style,
+        cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
         let mut children = layout.children();
@@ -995,21 +1064,13 @@ impl Internal {
             let page = children.next().expect("Widget draw: Missing Goto Page");
 
             if let Some(bounds) = page.bounds().intersection(viewport) {
-                <Renderer as advanced::Renderer>::fill_quad(
-                    renderer,
-                    Quad {
-                        bounds,
-                        ..Default::default()
-                    },
-                    Background::Color(color!(25, 155, 175)),
-                );
                 draw(
                     renderer,
-                    style,
+                    style.goto_page_text,
                     page,
                     self.goto_page.raw(),
                     self.pages_padding,
-                    viewport,
+                    &bounds,
                 );
             }
         }
@@ -1024,11 +1085,11 @@ impl Internal {
                         bounds,
                         ..Default::default()
                     },
-                    Background::Color(color!(25, 155, 175)),
+                    style.goto_input_background,
                 );
                 draw(
                     renderer,
-                    style,
+                    style.goto_input_text_color,
                     input,
                     self.goto_input.0.raw(),
                     self.pages_padding,
@@ -1041,17 +1102,23 @@ impl Internal {
             let go = children.next().expect("Widget draw: Missing Goto Go");
 
             if let Some(bounds) = go.bounds().intersection(viewport) {
+                let (background, text_color) = if cursor.is_over(go.bounds()) {
+                    (style.hovered_goto_background, style.hovered_goto_text_color)
+                } else {
+                    (style.goto_background, style.goto_text_color)
+                };
                 <Renderer as advanced::Renderer>::fill_quad(
                     renderer,
                     Quad {
                         bounds,
+                        border: style.goto_border,
                         ..Default::default()
                     },
-                    Background::Color(color!(25, 155, 175)),
+                    background,
                 );
                 draw(
                     renderer,
-                    style,
+                    text_color,
                     go,
                     self.goto_go.raw(),
                     self.pages_padding,
@@ -1065,7 +1132,7 @@ impl Internal {
         &self,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
-        style: &iced::advanced::renderer::Style,
+        style: Style,
         viewport: &Rectangle,
     ) {
         if let Some(bounds) = layout.bounds().intersection(viewport) {
@@ -1075,12 +1142,12 @@ impl Internal {
                     bounds,
                     ..Default::default()
                 },
-                Background::Color(color!(25, 155, 175)),
+                style.status_background,
             );
 
             draw(
                 renderer,
-                style,
+                style.status_text_color,
                 layout,
                 self.status.0.raw(),
                 self.pages_padding,
@@ -1093,10 +1160,11 @@ impl Internal {
         &self,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
-        style: &iced::advanced::renderer::Style,
+        style: Style,
         viewport: Rectangle,
         padding: Padding,
     ) {
+        let og_viewport = viewport;
         if let Some(clipped) = layout.bounds().intersection(&viewport) {
             <Renderer as advanced::Renderer>::fill_quad(
                 renderer,
@@ -1104,7 +1172,7 @@ impl Internal {
                     bounds: clipped,
                     ..Default::default()
                 },
-                Background::Color(color!(125, 185, 105)),
+                style.cell_border,
             );
         }
 
@@ -1117,6 +1185,8 @@ impl Internal {
         let headers = children.next().expect("Widget draw: Missing header cells");
         let cells = children.next().expect("Widget draw: Missing cells layout");
 
+        let mut top_left: Option<Size> = None;
+
         let numbering_viewport = {
             let moved = viewport + Vector::new(0.0, headers.bounds().height);
 
@@ -1125,7 +1195,7 @@ impl Internal {
             Rectangle::new(moved.position(), size)
         };
 
-        for (number, layout) in self.numbering.iter().zip(numbering.children()) {
+        for (idx, (number, layout)) in self.numbering.iter().zip(numbering.children()).enumerate() {
             let bounds = layout.bounds();
 
             if let Some(clipped_viewport) = bounds.intersection(&numbering_viewport) {
@@ -1134,19 +1204,33 @@ impl Internal {
                     .next()
                     .expect("Table draw: Resize node missing child layout");
 
+                top_left = Some(Size::new(child.bounds().width, 0.0));
+
                 if let Some(clipped_viewport) = child.bounds().intersection(&clipped_viewport) {
+                    let (background, text_color) = if idx % 2 == 1 {
+                        (
+                            style.alternating_backgrounds.1,
+                            style.alternating_text_color.1,
+                        )
+                    } else {
+                        (
+                            style.alternating_backgrounds.0,
+                            style.alternating_text_color.0,
+                        )
+                    };
+
                     <Renderer as advanced::Renderer>::fill_quad(
                         renderer,
                         Quad {
                             bounds: clipped_viewport,
                             ..Default::default()
                         },
-                        Background::Color(color!(25, 155, 175)),
+                        background,
                     );
 
                     draw(
                         renderer,
-                        style,
+                        text_color,
                         child,
                         number.raw(),
                         padding,
@@ -1188,9 +1272,10 @@ impl Internal {
                 .map(|selection| selection.header(idx))
                 .unwrap_or_default();
 
+            top_left = top_left.map(|size| Size::new(size.width, pair.bounds().height));
+
             if is_selected {
                 let bounds = pair.bounds().expand([Self::CELL_GAP, Self::CELL_GAP]);
-
                 if let Some(clipped_viewport) = bounds.intersection(&viewport) {
                     <Renderer as advanced::Renderer>::fill_quad(
                         renderer,
@@ -1198,7 +1283,7 @@ impl Internal {
                             bounds: clipped_viewport,
                             ..Default::default()
                         },
-                        Background::Color(color!(85, 55, 15)),
+                        style.selected_header_background,
                     );
                 }
             }
@@ -1210,14 +1295,14 @@ impl Internal {
                         bounds: clipped_viewport,
                         ..Default::default()
                     },
-                    Background::Color(color!(25, 155, 175)),
+                    style.header_background,
                 );
             }
 
             if let Some(label_viewport) = label.bounds().intersection(&viewport) {
                 draw(
                     renderer,
-                    style,
+                    style.header_text_color,
                     label,
                     header.raw(),
                     Padding::from(0),
@@ -1228,7 +1313,7 @@ impl Internal {
             if let Some(kind_viewport) = knd.bounds().intersection(&viewport) {
                 draw(
                     renderer,
-                    style,
+                    style.header_type_color,
                     knd,
                     kind.raw(),
                     Padding::from(0),
@@ -1271,7 +1356,7 @@ impl Internal {
                         bounds: clipped_viewport,
                         ..Default::default()
                     },
-                    Background::Color(color!(205, 185, 75)),
+                    Background::Color(Color::TRANSPARENT),
                 );
 
                 let (row, column) = (idx % self.page_limit, idx / self.page_limit);
@@ -1319,15 +1404,23 @@ impl Internal {
                             border: iced::Border::default().rounded(2.0),
                             ..Default::default()
                         },
-                        Background::Color(color!(185, 140, 90)),
+                        style.selected_cell_border,
                     );
                 }
 
                 if let Some(clipped_viewport) = child.bounds().intersection(&clipped_viewport) {
-                    let color = if is_selected {
-                        color!(125, 155, 125)
+                    let row = idx % self.page_limit;
+
+                    let (cell_background, text_color) = if row % 2 == 0 {
+                        (
+                            style.alternating_backgrounds.1,
+                            style.alternating_text_color.1,
+                        )
                     } else {
-                        color!(25, 155, 175)
+                        (
+                            style.alternating_backgrounds.0,
+                            style.alternating_text_color.0,
+                        )
                     };
 
                     <Renderer as advanced::Renderer>::fill_quad(
@@ -1336,12 +1429,16 @@ impl Internal {
                             bounds: clipped_viewport,
                             ..Default::default()
                         },
-                        Background::Color(color),
+                        if is_selected && !self.editing.is_some() {
+                            style.selected_cell_background
+                        } else {
+                            cell_background
+                        },
                     );
 
                     draw(
                         renderer,
-                        style,
+                        text_color,
                         child,
                         cell.raw(),
                         padding,
@@ -1362,6 +1459,21 @@ impl Internal {
             }
         }
 
+        if let Some(size) = top_left {
+            let bounds = Rectangle::new(layout.position(), size);
+
+            if let Some(clipped) = bounds.intersection(&og_viewport) {
+                <Renderer as advanced::Renderer>::fill_quad(
+                    renderer,
+                    Quad {
+                        bounds: clipped,
+                        ..Default::default()
+                    },
+                    style.header_background,
+                );
+            }
+        }
+
         match (editing, &self.editing) {
             (
                 Some(bounds),
@@ -1375,6 +1487,7 @@ impl Internal {
                 if let Some(clipped_bounds) = header_viewport.intersection(&bounds) {
                     self.draw_edit(
                         renderer,
+                        style,
                         cell,
                         clipped_bounds,
                         bounds,
@@ -1395,6 +1508,7 @@ impl Internal {
                 if let Some(clipped_bounds) = cell_viewport.intersection(&bounds) {
                     self.draw_edit(
                         renderer,
+                        style,
                         cell,
                         clipped_bounds,
                         bounds,
@@ -1410,6 +1524,7 @@ impl Internal {
     fn draw_edit(
         &self,
         renderer: &mut Renderer,
+        style: Style,
         cell: &Cell,
         clipped_bounds: Rectangle,
         full_bounds: Rectangle,
@@ -1448,7 +1563,7 @@ impl Internal {
                                 },
                                 ..Quad::default()
                             },
-                            color!(255, 0, 255),
+                            style.cursor_color,
                         ))
                     } else {
                         None
@@ -1479,7 +1594,7 @@ impl Internal {
                                 },
                                 ..Quad::default()
                             },
-                            color!(225, 42, 251),
+                            style.cursor_selection,
                         )),
                         if end == right {
                             right_offset
@@ -1526,10 +1641,11 @@ impl Internal {
         &self,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
-        style: &iced::advanced::renderer::Style,
+        style: Style,
         padding: Padding,
         cell_padding: Padding,
         spacing: f32,
+        cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
@@ -1566,14 +1682,15 @@ impl Internal {
         self.draw_status(renderer, status, style, viewport);
 
         if self.multiple_pages() {
-            self.draw_pagination(renderer, pagination, style, viewport);
+            self.draw_pagination(renderer, pagination, style, cursor, viewport);
 
-            self.draw_goto(renderer, goto, style, viewport);
+            self.draw_goto(renderer, goto, style, cursor, viewport);
         }
 
         if let Some(Editing::Goto(bounds)) = &self.editing {
             self.draw_edit(
                 renderer,
+                style,
                 &self.goto_input.0,
                 *bounds,
                 *bounds,
@@ -1846,23 +1963,12 @@ impl Internal {
         {
             Some((idx, (is_header, cell))) => {
                 let cell_bounds = cell.bounds();
-                let (cell, cursor_position) = if is_header {
-                    let pair = cell
-                        .children()
-                        .next()
-                        .expect("Table Update: Resize node missing pair layout");
-                    let cell = pair
-                        .children()
-                        .next()
-                        .expect("Table Update: Pair node missing label layout");
-                    (cell, cursor.position_over(pair.bounds()))
-                } else {
-                    let cell = cell
-                        .children()
-                        .next()
-                        .expect("Table Update: Resize node missing child layout");
-                    (cell, cursor.position_over(cell.bounds()))
-                };
+                let cell = cell
+                    .children()
+                    .next()
+                    .expect("Table Update: Resize node missing child layout");
+
+                let cursor_position = cursor.position_over(cell.bounds());
 
                 let (row, column) = if is_header {
                     (0, idx + 1)
@@ -1897,11 +2003,7 @@ impl Internal {
                     (row, column)
                 };
 
-                let cell_bounds = if is_header {
-                    cell.bounds()
-                } else {
-                    cell.bounds().shrink(padding)
-                };
+                let cell_bounds = cell.bounds().shrink(padding);
 
                 let Some(cursor_position) = cursor.position_over(cell_bounds) else {
                     return event::Status::Ignored;
@@ -1943,6 +2045,13 @@ impl Internal {
                     cursor_position.x - cell_bounds.x - alignment_offset
                 };
 
+                let (editing_idx, editing_is_header) = match self.editing.as_ref() {
+                    Some(Editing::Cell {
+                        index, is_header, ..
+                    }) => (Some(*index), *is_header),
+                    _ => (None, false),
+                };
+
                 match click.kind() {
                     click::Kind::Single if self.keyboard_modifiers.shift() && !is_header => {
                         self.last_click = Some(click);
@@ -1960,16 +2069,11 @@ impl Internal {
                             return event::Status::Captured;
                         }
                     }
-                    click::Kind::Single if is_header => {
-                        self.last_click = Some(click);
-                        self.reset_editing();
-                        self.selection.replace(Selection::column(
-                            column,
-                            (self.page_limit * (self.page + 1)).saturating_sub(1),
-                        ));
-                        return event::Status::Captured;
-                    }
-                    click::Kind::Single if self.editing.is_some() => {
+                    click::Kind::Single
+                        if editing_idx.is_some()
+                            && editing_idx.unwrap() == idx
+                            && is_header == editing_is_header =>
+                    {
                         // Needs to be in sync with kind::Double
                         let position = if target > 0.0 {
                             find_cursor_position(cell_bounds, &value, self, &cell, target)
@@ -1996,16 +2100,21 @@ impl Internal {
 
                         return event::Status::Captured;
                     }
+                    click::Kind::Single if is_header => {
+                        self.last_click = Some(click);
+                        self.reset_editing();
+                        self.selection.replace(Selection::column(
+                            column,
+                            (self.page_limit * (self.page + 1)).saturating_sub(1),
+                        ));
+                        return event::Status::Captured;
+                    }
                     click::Kind::Single => {
                         self.last_click = Some(click);
-                        match &self.editing {
-                            Some(Editing::Cell {
-                                index,
-                                is_header: editing,
-                                ..
-                            }) if *editing == is_header && *index == idx => {}
+                        match editing_idx {
+                            Some(index) if is_header == editing_is_header && index == idx => {}
                             _ => self.reset_editing(),
-                        };
+                        }
                         self.selection.replace(Selection::new(row, column));
                         return event::Status::Captured;
                     }
@@ -2441,7 +2550,7 @@ impl Internal {
                             focus.updated_at = Instant::now();
 
                             let column = column + 1;
-                            let row = row + 1;
+                            let row = (index % self.page_limit) + 1;
                             let min_bounds = cell.min_bounds().expand(padding);
                             let bounds = Size::new(self.min_widths[column], self.min_heights[row]);
 
@@ -3343,7 +3452,7 @@ fn text(
 
 fn draw<Renderer>(
     renderer: &mut Renderer,
-    style: &iced::advanced::renderer::Style,
+    text_color: Color,
     layout: layout::Layout<'_>,
     paragraph: &Renderer::Paragraph,
     padding: Padding,
@@ -3365,7 +3474,7 @@ fn draw<Renderer>(
         alignment::Vertical::Bottom => bounds.y + bounds.height,
     };
 
-    renderer.fill_paragraph(paragraph, Point::new(x, y), style.text_color, *viewport);
+    renderer.fill_paragraph(paragraph, Point::new(x, y), text_color, *viewport);
 }
 
 fn cell_to_string(cell: CellRef<'_>) -> String {
