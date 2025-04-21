@@ -234,11 +234,6 @@ impl State {
         self.selection = None;
     }
 
-    fn reset_min_dimensions(&mut self) {
-        self.min_widths = vec![0.0f32; self.min_widths.len()];
-        self.min_heights = vec![0.0f32; self.min_heights.len()];
-    }
-
     fn scroll_cells(&mut self, viewport: Size, offset: Vector) {
         let offset = offset * Self::SCROLL_MULT;
         let new = self.scroll_offset + offset;
@@ -2594,7 +2589,6 @@ impl State {
                 if cursor.is_over(back.bounds()) && self.page != 0 {
                     self.page -= 1;
                     self.goto_input.1 = (self.page + 1).to_string();
-                    self.reset_min_dimensions();
                     shell.invalidate_layout();
                     return event::Status::Captured;
                 }
@@ -2636,7 +2630,6 @@ impl State {
                     }
 
                     self.goto_input.1 = (self.page + 1).to_string();
-                    self.reset_min_dimensions();
                     shell.invalidate_layout();
                     return event::Status::Captured;
                 }
@@ -2649,7 +2642,6 @@ impl State {
                     self.page += 1;
                     self.goto_input.1 = (self.page + 1).to_string();
                     shell.invalidate_layout();
-                    self.reset_min_dimensions();
                     return event::Status::Captured;
                 }
 
@@ -2751,13 +2743,11 @@ impl State {
                             match page.parse::<usize>() {
                                 Ok(page) => {
                                     self.page = usize::clamp(page - 1, 0, self.pages_end());
-                                    self.reset_min_dimensions();
                                     shell.invalidate_layout();
                                     return event::Status::Captured;
                                 }
                                 Err(_) if page.is_empty() => {
                                     self.page = 0;
-                                    self.reset_min_dimensions();
                                     shell.invalidate_layout();
                                     return event::Status::Captured;
                                 }
@@ -2854,7 +2844,6 @@ impl State {
                             *value = (self.page + 1).to_string();
 
                             self.reset();
-                            self.reset_min_dimensions();
                             shell.invalidate_layout();
                             return event::Status::Captured;
                         }

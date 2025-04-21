@@ -1,4 +1,4 @@
-//#![allow(unused_imports, dead_code)]
+#![allow(unused_imports, dead_code)]
 use iced::{
     alignment::{Horizontal, Vertical},
     application, font,
@@ -108,8 +108,8 @@ impl App {
                     self.status.take();
                 }
             }
-            Message::Selection(selection) => {
-                dbg!(selection.list());
+            Message::Selection(_selection) => {
+                //dbg!(selection.list());
             }
             Message::None => {}
         };
@@ -124,7 +124,7 @@ impl App {
         let content = Table::new(&self.sht)
             .height(Length::Shrink)
             .on_keypress(|key_press| {
-                if key_press.key == keyboard::Key::Named(keyboard::key::Named::ArrowUp) {
+                if key_press.key == keyboard::Key::Named(keyboard::key::Named::Home) {
                     Some(Message::Test)
                 } else {
                     None
