@@ -101,7 +101,7 @@ where
     // 0 causes a weird issue
     /// Sets the maximum number of rows per page for the [`Table`].
     pub fn page_limit(mut self, limit: usize) -> Self {
-        self.page_limit = limit;
+        self.page_limit = limit.max(1);
         self
     }
 
