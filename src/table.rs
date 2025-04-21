@@ -1,21 +1,16 @@
-#![allow(unused_imports, dead_code)]
 use iced::{
     advanced::{
         self,
         layout::{self, Limits, Node},
-        mouse::{self, click},
+        mouse,
         renderer::Quad,
         text::{self, paragraph::Plain, LineHeight, Paragraph, Shaping, Wrapping},
         widget::tree::{self, Tag, Tree},
-        Shell, Widget,
+        Widget,
     },
     alignment::{self, Horizontal, Vertical},
-    color, event, font, keyboard,
-    time::{Duration, Instant},
-    touch,
-    widget::{Button, Scrollable, TextEditor, TextInput},
-    window, Background, Border, Color, Element, Event, Font, Length, Padding, Pixels, Point,
-    Rectangle, Renderer, Size, Theme, Vector,
+    event, Background, Color, Element, Font, Length, Padding, Pixels, Point, Rectangle, Renderer,
+    Size,
 };
 
 use modav_core::repr::col_sheet::{CellRef, ColumnSheet, DataType};
@@ -24,11 +19,10 @@ mod state;
 use state::*;
 
 mod utils;
-use utils::{Editor, Resizing};
 pub use utils::{KeyPress, Selection};
 
 pub mod style;
-use style::{Catalog, Style};
+use style::{Catalog, Style, StyleFn};
 
 type Cell = Plain<iced_graphics::text::Paragraph>;
 
@@ -36,6 +30,7 @@ const PAGINATION_ELLIPSIS: &str = "•••";
 /// The maximum number of items on a page
 const PAGE_LIMIT: usize = 25;
 
+/// A table widget.
 pub struct Table<'a, Message, Theme>
 where
     Theme: Catalog,
@@ -63,6 +58,7 @@ impl<'a, Message, Theme> Table<'a, Message, Theme>
 where
     Theme: Catalog,
 {
+    /// Creates a new [`Table`] widget with the given sheet.
     pub fn new(sheet: &'a ColumnSheet) -> Self {
         let limit = PAGE_LIMIT.min(sheet.height());
         Self {
@@ -86,47 +82,56 @@ where
         }
     }
 
+    /// Sets the width of the [`Table`].
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Sets the height of the [`Table`].
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.height = height.into();
         self
     }
 
     // 0 causes a weird issue
+    /// Sets the maximum number of rows per page for the [`Table`].
     pub fn page_limit(mut self, limit: usize) -> Self {
         self.page_limit = limit;
         self
     }
 
+    /// Sets the text size of the [`Table`].
     pub fn text_size(mut self, size: impl Into<Pixels>) -> Self {
         self.text_size = size.into();
         self
     }
 
+    /// Sets the [`Font`] of the [`Table`].
     pub fn font(mut self, font: Font) -> Self {
         self.font = font;
         self
     }
 
+    /// Sets the [`Padding`] of the [`Table`].
     pub fn padding(mut self, padding: impl Into<Padding>) -> Self {
         self.padding = padding.into();
         self
     }
 
+    /// Sets the [`Padding`] of the cells in the [`Table`].
     pub fn cell_padding(mut self, padding: impl Into<Padding>) -> Self {
         self.cell_padding = padding.into();
         self
     }
 
+    /// Sets the status of the [`Table`] if any.
     pub fn status_maybe(mut self, status: Option<String>) -> Self {
         self.status = status;
         self
     }
 
+    /// Sets the message that should be produced when some text is typed a cell.
     pub fn on_cell_input(
         mut self,
         callback: impl Fn(String, usize, usize) -> Message + 'a,
@@ -135,11 +140,13 @@ where
         self
     }
 
+    /// Sets the message that should be produced when some text is typed a header.
     pub fn on_header_input(mut self, callback: impl Fn(String, usize) -> Message + 'a) -> Self {
         self.on_header_input = Some(Box::new(callback));
         self
     }
 
+    /// Sets the message that should be produced when the text in a cell is submitted
     pub fn on_cell_submit(
         mut self,
         callback: impl Fn(String, usize, usize) -> Message + 'a,
@@ -148,23 +155,37 @@ where
         self
     }
 
+    /// Sets the message that should be produced when the text in a header is submitted
     pub fn on_header_submit(mut self, callback: impl Fn(String, usize) -> Message + 'a) -> Self {
         self.on_header_submit = Some(Box::new(callback));
         self
     }
 
+    /// Sets the message that should be produced when a cell selection is made.
     pub fn on_selection(mut self, callback: impl Fn(Selection) -> Message + 'a) -> Self {
         self.on_selection = Some(Box::new(callback));
         self
     }
 
+    /// Sets the closure to produces messages on key presses.
     pub fn on_keypress(mut self, callback: impl Fn(KeyPress) -> Option<Message> + 'a) -> Self {
         self.on_keypress = Some(Box::new(callback));
         self
     }
 
+    /// Sets the style class of the [`Table`].
     pub fn class(mut self, class: impl Into<Theme::Class<'a>>) -> Self {
         self.class = class.into();
+        self
+    }
+
+    /// Sets the style of the [`Table`].
+    pub fn style(mut self, style: impl Fn(&Theme) -> Style + 'a) -> Self
+    where
+        Theme::Class<'a>: From<StyleFn<'a, Theme>>,
+    {
+        self.class = (Box::new(style) as StyleFn<'a, Theme>).into();
+
         self
     }
 }

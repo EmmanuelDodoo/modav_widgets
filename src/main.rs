@@ -1,8 +1,9 @@
-#![allow(unused_imports, dead_code)]
+//#![allow(unused_imports, dead_code)]
 use iced::{
     alignment::{Horizontal, Vertical},
     application, font,
     highlighter::{Highlighter, Settings},
+    keyboard,
     widget::{
         button, center, column, container,
         container::bordered_box,
@@ -17,6 +18,8 @@ use iced::{
     },
     Element, Length, Task, Theme,
 };
+
+use modav_core::repr::col_sheet::ColumnSheet;
 
 mod custom;
 
@@ -46,21 +49,39 @@ struct Section {
 #[derive(Debug, Clone)]
 enum Message {
     Test,
+    Cell(String, usize, usize),
+    Header(String, usize),
+    Selection(Selection),
     None,
+    Light,
+    Dark,
 }
 
 struct App {
     sections: Vec<Section>,
     id_tracker: usize,
     theme: Theme,
+    sht: ColumnSheet,
+    status: Option<String>,
 }
 
 impl App {
     fn new() -> Self {
+        //let path = "temp/air.csv".to_owned();
+        //let path = "temp/empty.csv".to_owned();
+        let path = "temp/mid1.csv".to_owned();
+        let config = modav_core::repr::Config::new(path)
+            .trim(true)
+            .types(modav_core::repr::TypesStrategy::Infer)
+            .labels(modav_core::repr::HeaderStrategy::ReadLabels);
+        let sht = ColumnSheet::with_config(config).unwrap();
+
         Self {
-            theme: Theme::Nord,
+            theme: Theme::TokyoNightStorm,
             sections: vec![],
             id_tracker: 0,
+            sht,
+            status: None,
         }
     }
 
@@ -71,6 +92,25 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Test => println!("Testing"),
+            Message::Light => self.theme = Theme::Light,
+            Message::Dark => self.theme = Theme::TokyoNightStorm,
+            Message::Cell(value, row, column) => {
+                if let Err(error) = self.sht.set_cell(value, column, row) {
+                    self.status.replace(error.to_string());
+                } else {
+                    self.status.take();
+                }
+            }
+            Message::Header(value, column) => {
+                if let Err(error) = self.sht.set_col_header(column, value) {
+                    self.status.replace(error.to_string());
+                } else {
+                    self.status.take();
+                }
+            }
+            Message::Selection(selection) => {
+                dbg!(selection.list());
+            }
             Message::None => {}
         };
 
@@ -78,23 +118,34 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let text = text("Some Temporary Text");
+        //let text = text("Some Temporary Text");
 
-        //let path = "temp/air.csv".to_owned();
-        //let path = "temp/empty.csv".to_owned();
-        let path = "temp/mid1.csv".to_owned();
-        let config = modav_core::repr::Config::new(path)
-            .trim(true)
-            .types(modav_core::repr::TypesStrategy::Infer)
-            .labels(modav_core::repr::HeaderStrategy::ReadLabels);
-
-        //let content = Table::new(config).height(Length::Fixed(350.0));
-        let content = Table::new(config).height(Length::Shrink);
-        //let content = Table::new(config);
+        //let content = Table::new(&self.sht).height(Length::Fixed(350.0));
+        let content = Table::new(&self.sht)
+            .height(Length::Shrink)
+            .on_keypress(|key_press| {
+                if key_press.key == keyboard::Key::Named(keyboard::key::Named::ArrowUp) {
+                    Some(Message::Test)
+                } else {
+                    None
+                }
+            })
+            .status_maybe(self.status.clone())
+            .on_selection(Message::Selection)
+            .on_header_input(Message::Header)
+            .on_header_submit(Message::Header)
+            .on_cell_submit(Message::Cell)
+            .on_cell_input(Message::Cell);
+        //let content = Table::new(&self.sht);
         //let content = scrollable(row!(content)).direction(Direction::Horizontal(Scrollbar::new()));
         //let content = text_input("Nothing", "\"Wisconsin Dells\"").on_input(|_| Message::None);
 
-        let content = column!(text, content, "More")
+        let row = row!(
+            button("Light").on_press(Message::Light),
+            button("Dark").on_press(Message::Dark),
+        )
+        .spacing(75.0);
+        let content = column!(row, content, "More")
             .spacing(50.0)
             .align_x(Horizontal::Center)
             .height(Length::Fill)

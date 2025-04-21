@@ -1,6 +1,4 @@
-use iced::{
-    color, keyboard, mouse, Background, Border, Color, Point, Rectangle, Size, Theme, Vector,
-};
+use iced::{keyboard, mouse, Point, Rectangle, Size, Vector};
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
@@ -146,14 +144,14 @@ impl Cursor {
         end.min(value.len())
     }
 
-    pub fn left(&self, value: &str) -> usize {
+    pub fn _left(&self, value: &str) -> usize {
         match self.state(value) {
             State::Index(idx) => idx,
             State::Selection { start, end } => start.min(end),
         }
     }
 
-    pub fn right(&self, value: &str) -> usize {
+    pub fn _right(&self, value: &str) -> usize {
         match self.state(value) {
             State::Index(idx) => idx,
             State::Selection { start, end } => start.max(end),
@@ -171,7 +169,7 @@ impl<'a> Editor<'a> {
         Self { value, cursor }
     }
 
-    pub fn contents(&self) -> String {
+    pub fn _contents(&self) -> String {
         self.value.to_string()
     }
 

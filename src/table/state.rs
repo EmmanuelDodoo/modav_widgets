@@ -10,13 +10,8 @@ use iced::{
     alignment::Horizontal,
     event, font, keyboard,
     time::{Duration, Instant},
-    touch, window, Background, Color, Event, Font, Length, Padding, Pixels, Point, Rectangle,
-    Renderer, Size, Vector,
-};
-
-use modav_core::repr::{
-    col_sheet::{CellRef, Column, ColumnSheet, DataType, Error},
-    ColumnHeader, ColumnType, Config,
+    touch, window, Background, Color, Event, Font, Padding, Pixels, Point, Rectangle, Renderer,
+    Size, Vector,
 };
 
 use super::style::{Catalog, Style};
@@ -77,7 +72,7 @@ impl State {
     /// Multiplier for column kind text size.
     const KIND_MULT: f32 = 0.9;
 
-    pub fn new<'a, Message, Theme: Catalog>(table: &Table<'a, Message, Theme>) -> Self {
+    pub fn new<Message, Theme: Catalog>(table: &Table<'_, Message, Theme>) -> Self {
         let pages_padding = Padding::from([2, 6]);
         let size = table.text_size * 7.0 / 8.0;
 
@@ -197,7 +192,7 @@ impl State {
         self.cursor
     }
 
-    fn reset_status<'a>(&mut self, font: Font) {
+    fn _reset_status(&mut self, font: Font) {
         let value = format!("{} rows × {} columns", self.rows, self.cols);
 
         let text = super::text(
@@ -259,10 +254,7 @@ impl State {
         self.rows > self.page_limit
     }
 
-    fn layout_cells<'a, Message, Theme: Catalog>(
-        &mut self,
-        table: &Table<'a, Message, Theme>,
-    ) -> Node {
+    fn layout_cells<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) -> Node {
         let font = table.font;
         let padding = table.cell_padding;
         let size = table.text_size;
@@ -316,7 +308,7 @@ impl State {
                         style: font::Style::Normal,
                         ..font
                     };
-                    let text = super::text(&label, Self::MAX_CELL, font, Horizontal::Center, size);
+                    let text = super::text(label, Self::MAX_CELL, font, Horizontal::Center, size);
                     header.update(text);
                     let font = Font {
                         style: font::Style::Italic,
@@ -355,7 +347,7 @@ impl State {
                             .unwrap_or_default(),
                     };
 
-                    let text = super::text(&value, Self::MAX_CELL, font, horizontal, size);
+                    let text = super::text(value, Self::MAX_CELL, font, horizontal, size);
                     paragraph.update(text);
 
                     paragraph.min_bounds()
@@ -516,9 +508,9 @@ impl State {
         Node::with_children(size, vec![numbering, headers, cells])
     }
 
-    fn layout_pagination<'a, Message, Theme: Catalog>(
+    fn layout_pagination<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
     ) -> Node {
         if table.raw.is_empty() {
             return Node::with_children(Size::ZERO, vec![Node::default(); 3]);
@@ -602,10 +594,7 @@ impl State {
         Node::with_children(total_size, vec![back, pages, next])
     }
 
-    fn layout_goto<'a, Message, Theme: Catalog>(
-        &mut self,
-        table: &Table<'a, Message, Theme>,
-    ) -> Node {
+    fn layout_goto<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) -> Node {
         if table.raw.is_empty() {
             return Node::with_children(Size::ZERO, vec![Node::default(); 3]);
         }
@@ -624,7 +613,7 @@ impl State {
         let (input, value) = &mut self.goto_input;
 
         input.update(super::text(
-            &value,
+            value,
             Self::MAX_CELL,
             font,
             Horizontal::Right,
@@ -653,9 +642,9 @@ impl State {
         Node::with_children(total_size, vec![page, input, go])
     }
 
-    fn layout_status<'a, Message, Theme: Catalog>(
+    fn layout_status<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         max_width: f32,
     ) -> Node {
         if table.raw.is_empty() {
@@ -664,9 +653,13 @@ impl State {
 
         let bounds = Size::new(max_width, f32::INFINITY);
         let (cell, value) = &mut self.status;
+        let value = match table.status.as_ref() {
+            Some(status) => status,
+            None => value,
+        };
 
         cell.update(super::text(
-            &value,
+            value,
             bounds,
             table.font,
             Horizontal::Center,
@@ -678,9 +671,9 @@ impl State {
         Node::new(size)
     }
 
-    pub fn layout<'a, Message, Theme: Catalog>(
+    pub fn layout<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         limits: Limits,
     ) -> Node {
         let spacing = if table.raw.is_empty() {
@@ -1207,7 +1200,7 @@ impl State {
                 let selection = {
                     let mut padding = Padding::ZERO;
 
-                    if ((selection >> 0) & 1) == 1 {
+                    if (selection & 1) == 1 {
                         padding = padding.left(Self::CELL_GAP);
                     }
 
@@ -1264,7 +1257,7 @@ impl State {
                         cell_background,
                     );
 
-                    if is_selected && !self.editing.is_some() {
+                    if is_selected && self.editing.is_none() {
                         <Renderer as advanced::Renderer>::fill_quad(
                             renderer,
                             Quad {
@@ -1330,7 +1323,7 @@ impl State {
                         cell,
                         clipped_bounds,
                         bounds,
-                        &value,
+                        value,
                         cell.horizontal_alignment(),
                     )
                 }
@@ -1351,7 +1344,7 @@ impl State {
                         cell,
                         clipped_bounds,
                         bounds,
-                        &value,
+                        value,
                         cell.horizontal_alignment(),
                     )
                 }
@@ -1476,9 +1469,9 @@ impl State {
         }
     }
 
-    pub fn draw<'a, Message, Theme: Catalog>(
+    pub fn draw<Message, Theme: Catalog>(
         &self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -1773,9 +1766,9 @@ impl State {
         mouse::Interaction::None
     }
 
-    fn update_cells_click<'a, Message, Theme: Catalog>(
+    fn update_cells_click<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
         shell: &mut Shell<'_, Message>,
@@ -1953,7 +1946,7 @@ impl State {
                     {
                         // Needs to be in sync with kind::Double
                         let position = if target > 0.0 {
-                            find_cursor_position(cell_bounds, &value, self, &cell, target)
+                            find_cursor_position(cell_bounds, &value, self, cell, target)
                         } else {
                             None
                         }
@@ -2027,7 +2020,7 @@ impl State {
                         // Needs to be in sync with kind::Single
                         // editing.is_some()
                         let position = if target > 0.0 {
-                            find_cursor_position(cell_bounds, &value, self, &cell, target)
+                            find_cursor_position(cell_bounds, &value, self, cell, target)
                         } else {
                             None
                         }
@@ -2079,19 +2072,19 @@ impl State {
                     }
                 }
 
-                return event::Status::Ignored;
+                event::Status::Ignored
             }
             None => {
                 self.reset();
 
-                return event::Status::Ignored;
+                event::Status::Ignored
             }
         }
     }
 
-    fn update_cells<'a, Message, Theme: Catalog>(
+    fn update_cells<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2218,7 +2211,7 @@ impl State {
                         match click.kind() {
                             click::Kind::Single => {
                                 let position = if target > 0.0 {
-                                    find_cursor_position(cell_bounds, &value, self, &cell, target)
+                                    find_cursor_position(cell_bounds, &value, self, cell, target)
                                 } else {
                                     None
                                 }
@@ -2254,7 +2247,7 @@ impl State {
                             is_header,
                         });
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     None => {
                         self.reset();
@@ -2326,13 +2319,11 @@ impl State {
                     position.x - bounds.x - alignment_offset
                 };
 
-                let position =
-                    find_cursor_position(bounds, &value, self, cell, target).unwrap_or(0);
+                let position = find_cursor_position(bounds, value, self, cell, target).unwrap_or(0);
 
-                self.cursor
-                    .select_range(self.cursor.start(&value), position);
+                self.cursor.select_range(self.cursor.start(value), position);
 
-                return event::Status::Captured;
+                event::Status::Captured
             }
             Event::Mouse(mouse::Event::CursorMoved { position })
             | Event::Touch(touch::Event::FingerMoved { position, .. })
@@ -2350,7 +2341,7 @@ impl State {
 
                 self.scroll_cells(scroll_bounds, diff * (1.0 / Self::SCROLL_MULT));
                 shell.invalidate_layout();
-                return event::Status::Captured;
+                event::Status::Captured
             }
             Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. }) => {
                 let Some(focus) = self.is_focused.as_mut() else {
@@ -2394,7 +2385,7 @@ impl State {
                 };
 
                 if key.as_ref() == keyboard::Key::Character("a") && modifiers.command() {
-                    self.cursor.select_all(&value);
+                    self.cursor.select_all(value);
                     return event::Status::Captured;
                 }
 
@@ -2479,16 +2470,14 @@ impl State {
                                 let msg = callback(value.clone(), column - 1);
                                 shell.publish(msg)
                             }
-                        } else {
-                            if let Some(callback) = table.on_cell_submit.as_ref() {
-                                let msg = callback(value.clone(), row, column);
-                                shell.publish(msg);
-                            }
+                        } else if let Some(callback) = table.on_cell_submit.as_ref() {
+                            let msg = callback(value.clone(), row, column);
+                            shell.publish(msg);
                         }
 
                         self.reset();
                         shell.invalidate_layout();
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::Backspace) => {
                         let mut editor = Editor::new(value, &mut self.cursor);
@@ -2507,14 +2496,12 @@ impl State {
                                 let msg = callback(value.clone(), column.saturating_sub(1));
                                 shell.publish(msg);
                             }
-                        } else {
-                            if let Some(callback) = table.on_cell_input.as_ref() {
-                                let msg = callback(value.clone(), row, column);
-                                shell.publish(msg)
-                            }
+                        } else if let Some(callback) = table.on_cell_input.as_ref() {
+                            let msg = callback(value.clone(), row, column);
+                            shell.publish(msg)
                         }
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::Delete) => {
                         let mut editor = Editor::new(value, &mut self.cursor);
@@ -2533,14 +2520,12 @@ impl State {
                                 let msg = callback(value.clone(), column.saturating_sub(1));
                                 shell.publish(msg);
                             }
-                        } else {
-                            if let Some(callback) = table.on_cell_input.as_ref() {
-                                let msg = callback(value.clone(), row, column);
-                                shell.publish(msg)
-                            }
+                        } else if let Some(callback) = table.on_cell_input.as_ref() {
+                            let msg = callback(value.clone(), row, column);
+                            shell.publish(msg)
                         }
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
                         if modifiers.shift() {
@@ -2549,7 +2534,7 @@ impl State {
                             self.cursor.move_left(value);
                         }
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
                         if modifiers.shift() {
@@ -2558,11 +2543,11 @@ impl State {
                             self.cursor.move_right(value);
                         }
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::Escape) => {
                         self.reset();
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
                         if modifiers.shift() {
@@ -2571,7 +2556,7 @@ impl State {
                             self.cursor.move_to(0);
                         }
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
                         if modifiers.shift() {
@@ -2580,11 +2565,9 @@ impl State {
                             self.cursor.move_to_end(value);
                         }
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
-                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        return event::Status::Ignored;
-                    }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => event::Status::Ignored,
 
                     _ => event::Status::Captured,
                 }
@@ -2662,7 +2645,7 @@ impl State {
                     .next()
                     .expect("Widget Update: missing paginations: Next");
 
-                if cursor.is_over(next.bounds()) && self.page + 1 <= self.pages_end() {
+                if cursor.is_over(next.bounds()) && self.page < self.pages_end() {
                     self.page += 1;
                     self.goto_input.1 = (self.page + 1).to_string();
                     shell.invalidate_layout();
@@ -2676,9 +2659,9 @@ impl State {
         }
     }
 
-    fn update_goto<'a, Message, Theme: Catalog>(
+    fn update_goto<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2723,7 +2706,7 @@ impl State {
 
                                     find_cursor_position(
                                         input.bounds().shrink(self.pages_padding),
-                                        &value,
+                                        value,
                                         self,
                                         &self.goto_input.0,
                                         target,
@@ -2758,7 +2741,7 @@ impl State {
                         self.editing =
                             Some(Editing::Goto(input.bounds().shrink(self.pages_padding)));
 
-                        return event::Status::Captured;
+                        event::Status::Captured
                     }
                     None => {
                         self.reset();
@@ -2807,10 +2790,9 @@ impl State {
                 let position =
                     find_cursor_position(text_bounds, value, self, cell, target).unwrap_or(0);
 
-                self.cursor
-                    .select_range(self.cursor.start(&value), position);
+                self.cursor.select_range(self.cursor.start(value), position);
 
-                return event::Status::Captured;
+                event::Status::Captured
             }
             Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. }) => {
                 let Some(focus) = self.is_focused.as_mut() else {
@@ -2831,7 +2813,7 @@ impl State {
                     if let Some(c) = text
                         .chars()
                         .next()
-                        .filter(|c| !c.is_control() && c.is_digit(10))
+                        .filter(|c| !c.is_control() && c.is_ascii_digit())
                     {
                         let mut editor = Editor::new(value, &mut self.cursor);
 
@@ -2942,9 +2924,9 @@ impl State {
         }
     }
 
-    pub fn on_update<'a, Message, Theme: Catalog>(
+    pub fn on_update<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'a, Message, Theme>,
+        table: &Table<'_, Message, Theme>,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
