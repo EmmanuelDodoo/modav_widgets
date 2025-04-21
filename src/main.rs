@@ -52,6 +52,8 @@ enum Message {
     Cell(String, usize, usize),
     Header(String, usize),
     Selection(Selection),
+    AddLimit,
+    SubLimit,
     None,
     Light,
     Dark,
@@ -63,6 +65,7 @@ struct App {
     theme: Theme,
     sht: ColumnSheet,
     status: Option<String>,
+    limit: usize,
 }
 
 impl App {
@@ -82,6 +85,7 @@ impl App {
             id_tracker: 0,
             sht,
             status: None,
+            limit: 15,
         }
     }
 
@@ -111,6 +115,8 @@ impl App {
             Message::Selection(_selection) => {
                 //dbg!(selection.list());
             }
+            Message::AddLimit => self.limit += 1,
+            Message::SubLimit => self.limit = (self.limit - 1).max(1),
             Message::None => {}
         };
 
@@ -123,6 +129,7 @@ impl App {
         //let content = Table::new(&self.sht).height(Length::Fixed(350.0));
         let content = Table::new(&self.sht)
             .height(Length::Shrink)
+            .page_limit(self.limit)
             .on_keypress(|key_press| {
                 if key_press.key == keyboard::Key::Named(keyboard::key::Named::Home) {
                     Some(Message::Test)
@@ -150,6 +157,17 @@ impl App {
             .align_x(Horizontal::Center)
             .height(Length::Fill)
             .width(Length::Fill);
+
+        let btns = column!(
+            vertical_space(),
+            button("Increase").on_press(Message::AddLimit),
+            text(format!("Current page limit: {}", self.limit)),
+            button("Reduce").on_press(Message::SubLimit),
+            vertical_space(),
+        )
+        .spacing(20.0);
+
+        let content = row!(btns, content).spacing(15.0);
 
         let content = container(content)
             .padding([4, 8])

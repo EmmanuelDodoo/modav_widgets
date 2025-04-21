@@ -36,6 +36,8 @@ where
     Theme: Catalog,
 {
     raw: &'a ColumnSheet,
+    rows: usize,
+    cols: usize,
     page_limit: usize,
     width: Length,
     height: Length,
@@ -63,6 +65,8 @@ where
         let limit = PAGE_LIMIT.min(sheet.height());
         Self {
             raw: sheet,
+            rows: sheet.height(),
+            cols: sheet.width(),
             page_limit: limit,
             width: Length::Shrink,
             height: Length::Shrink,
@@ -188,6 +192,18 @@ where
 
         self
     }
+
+    /// Ending page
+    fn pages_end(&self) -> usize {
+        if self.page_limit == 0 {
+            return 0;
+        }
+        self.raw.height() / self.page_limit
+    }
+
+    fn multiple_pages(&self) -> bool {
+        self.raw.height() > self.page_limit
+    }
 }
 
 impl<Message, Theme> Widget<Message, Theme, Renderer> for Table<'_, Message, Theme>
@@ -199,7 +215,7 @@ where
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(State::new(self))
+        tree::State::new(State::new())
     }
 
     fn size(&self) -> iced::Size<Length> {
@@ -267,7 +283,7 @@ where
         }
 
         let state = state.state.downcast_ref::<State>();
-        state.mouse_interaction(layout, cursor)
+        state.mouse_interaction(self, layout, cursor)
     }
 
     fn on_event(
