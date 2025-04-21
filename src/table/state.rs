@@ -28,6 +28,7 @@ const GOTO_PAGE: &str = "Page:";
 const GOTO_GO: &str = "Go";
 const CURSOR_BLINK_INTERVAL_MILLIS: u128 = 500;
 
+#[derive(Default)]
 pub struct State {
     cells: Vec<Cell>,
     numbering: Vec<Cell>,
@@ -40,10 +41,7 @@ pub struct State {
     goto_go: Cell,
     status: (Cell, String),
     pages_padding: Padding,
-    rows: usize,
-    cols: usize,
     page: usize,
-    page_limit: usize,
     page_size: Pixels,
     pages_gap: f32,
     cursor: utils::Cursor,
@@ -72,28 +70,50 @@ impl State {
     /// Multiplier for column kind text size.
     const KIND_MULT: f32 = 0.9;
 
-    pub fn new<Message, Theme: Catalog>(table: &Table<'_, Message, Theme>) -> Self {
-        let pages_padding = Padding::from([2, 6]);
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn pre_layout<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) {
+        self.pages_padding = Padding::from([2, 6]);
         let size = table.text_size * 7.0 / 8.0;
+        self.page_size = size;
 
         let dimensions = (table.raw.height(), table.raw.width());
 
-        let headers = vec![(Cell::default(), Cell::default()); dimensions.0];
+        self.headers = vec![(Cell::default(), Cell::default()); dimensions.0];
 
         let limit = table.page_limit;
-        let min_widths = vec![0.0f32; dimensions.1 + 1];
-        let min_heights = vec![0.0f32; limit + 1];
 
-        let numbering = vec![Cell::default(); limit + 1];
-        let pages_end = if limit == 0 {
-            0
-        } else {
-            (table.raw.height() / limit) + 1
-        };
-        let paginations =
+        let width_len = self.min_widths.len();
+        if width_len == 0 {
+            self.min_widths = vec![0.0f32; dimensions.1 + 1];
+        } else if width_len < dimensions.1 + 1 {
+            let diff = dimensions.1 + 1 - width_len;
+            let mut extra = vec![0.0f32; diff];
+            self.min_widths.append(&mut extra)
+        } else if width_len > dimensions.1 + 1 {
+            self.min_widths.truncate(dimensions.1 + 1);
+        }
+
+        let height_len = self.min_heights.len();
+        if height_len == 0 {
+            self.min_heights = vec![0.0f32; limit + 1];
+        } else if height_len < limit + 1 {
+            let diff = limit + 1 - height_len;
+            let mut extra = vec![0.0f32; diff];
+            self.min_heights.append(&mut extra);
+        } else if height_len > limit + 1 {
+            self.min_heights.truncate(limit + 1);
+        }
+
+        self.numbering = vec![Cell::default(); limit + 1];
+        let pages_end = table.pages_end() + 1;
+
+        self.paginations =
             vec![(Cell::default(), String::default()); Self::PAGINATION_LIMIT.min(pages_end)];
 
-        let status = {
+        self.status = {
             let value = match table.status.as_ref() {
                 Some(status) => status.clone(),
                 None => format!("{} rows × {} columns", dimensions.0, dimensions.1),
@@ -102,19 +122,19 @@ impl State {
             (Cell::new(text), value)
         };
 
-        let cells = vec![Cell::default(); limit * dimensions.1];
+        self.cells = vec![Cell::default(); limit * dimensions.1];
 
-        let back = {
+        self.page_back = {
             let text = super::text(BACK, Self::MAX_CELL, table.font, Horizontal::Center, size);
             Cell::new(text)
         };
 
-        let next = {
+        self.page_next = {
             let text = super::text(NEXT, Self::MAX_CELL, table.font, Horizontal::Center, size);
             Cell::new(text)
         };
 
-        let goto_page = {
+        self.goto_page = {
             let text = super::text(
                 GOTO_PAGE,
                 Self::MAX_CELL,
@@ -125,7 +145,7 @@ impl State {
             Cell::new(text)
         };
 
-        let goto_go = {
+        self.goto_go = {
             let text = super::text(
                 GOTO_GO,
                 Self::MAX_CELL,
@@ -136,52 +156,13 @@ impl State {
             Cell::new(text)
         };
 
-        let goto_input = {
-            let value = String::from("1");
+        self.goto_input = {
+            let value = (self.page + 1).to_string();
             let text = super::text(&value, Self::MAX_CELL, table.font, Horizontal::Center, size);
             (Cell::new(text), value)
         };
 
-        Self {
-            //raw,
-            rows: dimensions.0,
-            cols: dimensions.1,
-            page: 0,
-            cells,
-            paginations,
-            pages_padding,
-            page_size: size,
-            page_back: back,
-            page_next: next,
-            status,
-            page_limit: limit,
-            pages_gap: 5.0,
-            goto_input,
-            goto_go,
-            goto_page,
-            cursor: utils::Cursor::default(),
-            is_focused: None,
-            last_click: None,
-            keyboard_modifiers: keyboard::Modifiers::default(),
-            is_text_dragging: false,
-            editing: None,
-            scroll_offset: Vector::ZERO,
-            cells_dim: Size::ZERO,
-            numbering,
-            headers,
-            min_widths,
-            min_heights,
-            resizing: None,
-            selection: None,
-        }
-    }
-
-    /// Ending page
-    fn pages_end(&self) -> usize {
-        if self.page_limit == 0 {
-            return 0;
-        }
-        self.rows / self.page_limit
+        self.pages_gap = 5.0;
     }
 
     pub fn is_focused(&self) -> bool {
@@ -190,24 +171,6 @@ impl State {
 
     pub fn cursor(&self) -> utils::Cursor {
         self.cursor
-    }
-
-    fn _reset_status(&mut self, font: Font) {
-        let value = format!("{} rows × {} columns", self.rows, self.cols);
-
-        let text = super::text(
-            &value,
-            Self::MAX_CELL,
-            font,
-            Horizontal::Left,
-            self.page_size,
-        );
-
-        let (cell, status) = &mut self.status;
-
-        cell.update(text);
-
-        *status = value;
     }
 
     /// Resets both editing and resizing
@@ -245,10 +208,6 @@ impl State {
             Vector::new(new.x.clamp(width_diff, 0.0), new.y.clamp(height_diff, 0.0));
     }
 
-    fn multiple_pages(&self) -> bool {
-        self.rows > self.page_limit
-    }
-
     fn layout_cells<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) -> Node {
         let font = table.font;
         let padding = table.cell_padding;
@@ -256,9 +215,9 @@ impl State {
 
         let gap = Self::CELL_GAP;
         // Adds numbering column
-        let dimensions = (self.rows, self.cols + 1);
+        let dimensions = (table.rows, table.cols + 1);
         // Adds headers row
-        let page_limit = self.page_limit + 1;
+        let page_limit = table.page_limit + 1;
 
         let numbering_max = dimensions.0;
         let numbering_max = Cell::new(super::text(
@@ -325,7 +284,7 @@ impl State {
                     Size::new(header.width.max(knd.width), header.height + knd.height)
                 } else {
                     let row = row - 1;
-                    let idx = (column * self.page_limit) + (row % self.page_limit);
+                    let idx = (column * table.page_limit) + (row % table.page_limit);
                     let paragraph = &mut self.cells[idx];
                     let row = row + (self.page * (page_limit - 1));
 
@@ -349,7 +308,7 @@ impl State {
                 }
             } else if row != 0 {
                 let paragraph = &mut self.numbering[row];
-                let row = (row - 1) + (self.page_limit * self.page);
+                let row = (row - 1) + (table.page_limit * self.page);
                 let font = Font {
                     style: font::Style::Italic,
                     ..font
@@ -513,7 +472,7 @@ impl State {
 
         let font = table.font;
         let gap = self.pages_gap;
-        let pages_end = self.pages_end() + 1;
+        let pages_end = table.pages_end() + 1;
         let current_page = self.page + 1;
 
         let pages = if pages_end <= Self::PAGINATION_LIMIT {
@@ -524,7 +483,7 @@ impl State {
             gen_pagination(1, pages_end as isize, current_page as isize)
         };
 
-        let mut min_bounds = Size::INFINITY;
+        let mut min_bounds = Size::ZERO;
 
         // Update paragraphs, register min width
         for (page, (cell, content)) in pages.into_iter().zip(self.paginations.iter_mut()) {
@@ -540,7 +499,7 @@ impl State {
 
             let size = cell.min_bounds().expand(self.pages_padding);
 
-            min_bounds = min_bounds.min(size);
+            min_bounds = min_bounds.max(size);
         }
 
         let back = self.page_back.min_bounds().expand(self.pages_padding);
@@ -595,7 +554,7 @@ impl State {
         }
         let font = table.font;
         let max = Cell::new(super::text(
-            &(self.pages_end() + 1).to_string(),
+            &(table.pages_end() + 1).to_string(),
             Self::MAX_CELL,
             font,
             Horizontal::Right,
@@ -676,6 +635,9 @@ impl State {
         } else {
             table.spacing
         };
+
+        self.pre_layout(table);
+
         let padding = table.padding;
 
         let content_limits = limits
@@ -683,14 +645,14 @@ impl State {
             .height(table.height)
             .shrink(table.padding);
 
-        let mut pagination = if self.multiple_pages() {
+        let mut pagination = if table.multiple_pages() {
             self.layout_pagination(table)
         } else {
             Node::default()
         };
         let pagination_size = pagination.size();
 
-        let mut goto = if self.multiple_pages() {
+        let mut goto = if table.multiple_pages() {
             self.layout_goto(table)
         } else {
             Node::default()
@@ -702,7 +664,7 @@ impl State {
             pagination_size.height.max(goto_size.height),
         );
 
-        let actions_spacing = if self.multiple_pages() { spacing } else { 0.0 };
+        let actions_spacing = if table.multiple_pages() { spacing } else { 0.0 };
 
         let mut status = self.layout_status(table, content_limits.max().width);
         let status_size = status.size();
@@ -781,8 +743,9 @@ impl State {
         }
     }
 
-    fn draw_pagination(
+    fn draw_pagination<Message, Theme: Catalog>(
         &self,
+        table: &Table<'_, Message, Theme>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -835,7 +798,7 @@ impl State {
         {
             let next = children.next().expect("Missing paginations: Next");
 
-            let (background, text_color) = if self.page == self.pages_end() {
+            let (background, text_color) = if self.page == table.pages_end() {
                 (
                     style.pagination_background.scale_alpha(0.5),
                     style.pagination_text.scale_alpha(0.5),
@@ -976,8 +939,9 @@ impl State {
         }
     }
 
-    fn draw_cells(
+    fn draw_cells<Message, Theme: Catalog>(
         &self,
+        table: &Table<'_, Message, Theme>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -1179,7 +1143,7 @@ impl State {
                     Background::Color(Color::TRANSPARENT),
                 );
 
-                let (row, column) = (idx % self.page_limit, idx / self.page_limit);
+                let (row, column) = (idx % table.page_limit, idx / table.page_limit);
 
                 let (selection, is_selected) = self
                     .selection
@@ -1229,7 +1193,7 @@ impl State {
                 }
 
                 if let Some(clipped_viewport) = child.bounds().intersection(&clipped_viewport) {
-                    let row = idx % self.page_limit;
+                    let row = idx % table.page_limit;
 
                     let (cell_background, text_color) = if row % 2 == 0 {
                         (
@@ -1489,7 +1453,7 @@ impl State {
             let width = bounds.width - padding.horizontal() + Self::CELL_GAP;
             let diff = padding.vertical()
                 + pagination.bounds().height.max(goto.bounds().height)
-                + if self.multiple_pages() { spacing } else { 0.0 }
+                + if table.multiple_pages() { spacing } else { 0.0 }
                 + status.bounds().height
                 + spacing;
 
@@ -1504,13 +1468,20 @@ impl State {
         };
 
         if let Some(clipped_viewport) = cells_bounds.intersection(viewport) {
-            self.draw_cells(renderer, cells, style, clipped_viewport, table.cell_padding)
+            self.draw_cells(
+                table,
+                renderer,
+                cells,
+                style,
+                clipped_viewport,
+                table.cell_padding,
+            )
         };
 
         self.draw_status(renderer, status, style, viewport);
 
-        if self.multiple_pages() {
-            self.draw_pagination(renderer, pagination, style, cursor, viewport);
+        if table.multiple_pages() {
+            self.draw_pagination(table, renderer, pagination, style, cursor, viewport);
 
             self.draw_goto(renderer, goto, style, cursor, viewport);
         }
@@ -1662,8 +1633,9 @@ impl State {
         mouse::Interaction::None
     }
 
-    fn interaction_pagination(
+    fn interaction_pagination<Message, Theme: Catalog>(
         &self,
+        table: &Table<'_, Message, Theme>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
@@ -1689,7 +1661,7 @@ impl State {
             .next()
             .expect("Widget Interaction: missing paginations: Next");
 
-        if cursor.is_over(next.bounds()) && self.page != self.pages_end() {
+        if cursor.is_over(next.bounds()) && self.page != table.pages_end() {
             return mouse::Interaction::Pointer;
         }
 
@@ -1722,8 +1694,9 @@ impl State {
         mouse::Interaction::None
     }
 
-    pub fn mouse_interaction(
+    pub fn mouse_interaction<Message, Theme: Catalog>(
         &self,
+        table: &Table<'_, Message, Theme>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
@@ -1742,12 +1715,12 @@ impl State {
 
         let _status = children.next();
 
-        if self.multiple_pages() {
+        if table.multiple_pages() {
             let pagination = children
                 .next()
                 .expect("Widget Interaction: Missing pagination layout");
             if cursor.is_over(pagination.bounds()) {
-                return self.interaction_pagination(pagination, cursor);
+                return self.interaction_pagination(table, pagination, cursor);
             }
 
             let goto = children
@@ -1789,7 +1762,7 @@ impl State {
             self.last_click = Some(click);
             self.reset_editing();
             self.selection
-                .replace(Selection::row(row, self.cols.saturating_sub(1)));
+                .replace(Selection::row(row, table.cols.saturating_sub(1)));
             if let Some(callback) = table.on_selection.as_ref() {
                 // Guaranteed by the Selection::row above
                 let msg = callback(self.selection.clone().unwrap());
@@ -1826,9 +1799,9 @@ impl State {
                 let (row, column) = if is_header {
                     (0, idx + 1)
                 } else {
-                    let idx = idx - self.cols;
-                    let column = (idx / self.page_limit) + 1;
-                    let row = (idx + 1) - ((idx / self.page_limit) * self.page_limit);
+                    let idx = idx - table.cols;
+                    let column = (idx / table.page_limit) + 1;
+                    let row = (idx + 1) - ((idx / table.page_limit) * table.page_limit);
                     (row, column)
                 };
 
@@ -1850,9 +1823,9 @@ impl State {
                 let (row, column) = if is_header {
                     (0, idx)
                 } else {
-                    let idx = idx - self.cols;
-                    let column = idx / self.page_limit;
-                    let row = idx % self.page_limit;
+                    let idx = idx - table.cols;
+                    let column = idx / table.page_limit;
+                    let row = idx % table.page_limit;
                     (row, column)
                 };
 
@@ -1873,10 +1846,10 @@ impl State {
 
                     (idx, cell, value)
                 } else {
-                    let idx = idx - self.cols;
+                    let idx = idx - table.cols;
                     let cell = &self.cells[idx];
-                    let (row, column) = (idx % self.page_limit, idx / self.page_limit);
-                    let row = row + (self.page * self.page_limit);
+                    let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                    let row = row + (self.page * table.page_limit);
 
                     let col = table
                         .raw
@@ -1970,7 +1943,7 @@ impl State {
                         self.reset_editing();
                         self.selection.replace(Selection::column(
                             column,
-                            (self.page_limit * (self.page + 1)).saturating_sub(1),
+                            (table.page_limit * (self.page + 1)).saturating_sub(1),
                         ));
 
                         if let Some(callback) = table.on_selection.as_ref() {
@@ -2057,7 +2030,7 @@ impl State {
                         self.last_click = Some(click);
                         self.reset_editing();
                         self.selection
-                            .replace(Selection::row(row, self.cols.saturating_sub(1)));
+                            .replace(Selection::row(row, table.cols.saturating_sub(1)));
                         if let Some(callback) = table.on_selection.as_ref() {
                             // Guaranteed by the Selection::row above
                             let msg = callback(self.selection.clone().unwrap());
@@ -2143,9 +2116,9 @@ impl State {
                         let (row, column) = if is_header {
                             (0, idx + 1)
                         } else {
-                            let idx = idx - self.cols;
-                            let column = (idx / self.page_limit) + 1;
-                            let row = (idx + 1) - ((idx / self.page_limit) * self.page_limit);
+                            let idx = idx - table.cols;
+                            let column = (idx / table.page_limit) + 1;
+                            let row = (idx + 1) - ((idx / table.page_limit) * table.page_limit);
                             (row, column)
                         };
 
@@ -2172,10 +2145,10 @@ impl State {
 
                             (idx, cell, value)
                         } else {
-                            let idx = idx - self.cols;
+                            let idx = idx - table.cols;
                             let cell = &self.cells[idx];
-                            let (row, column) = (idx % self.page_limit, idx / self.page_limit);
-                            let row = row + (self.page * self.page_limit);
+                            let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                            let row = row + (self.page * table.page_limit);
 
                             let col = table
                                 .raw
@@ -2367,8 +2340,8 @@ impl State {
                     (cell, col, 0, index + 1)
                 } else {
                     let cell = &mut self.cells[index];
-                    let (row, column) = (index % self.page_limit, index / self.page_limit);
-                    let row = row + (self.page * self.page_limit);
+                    let (row, column) = (index % table.page_limit, index / table.page_limit);
+                    let row = row + (self.page * table.page_limit);
 
                     let col = table
                         .raw
@@ -2442,7 +2415,7 @@ impl State {
                             }
 
                             let column = column + 1;
-                            let row = (index % self.page_limit) + 1;
+                            let row = (index % table.page_limit) + 1;
                             let min_bounds = cell.min_bounds().expand(padding);
                             let bounds = Size::new(self.min_widths[column], self.min_heights[row]);
 
@@ -2571,8 +2544,9 @@ impl State {
         }
     }
 
-    fn update_pagination<Message>(
+    fn update_pagination<Message, Theme: Catalog>(
         &mut self,
+        table: &Table<'_, Message, Theme>,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2638,7 +2612,7 @@ impl State {
                     .next()
                     .expect("Widget Update: missing paginations: Next");
 
-                if cursor.is_over(next.bounds()) && self.page < self.pages_end() {
+                if cursor.is_over(next.bounds()) && self.page < table.pages_end() {
                     self.page += 1;
                     self.goto_input.1 = (self.page + 1).to_string();
                     shell.invalidate_layout();
@@ -2742,7 +2716,7 @@ impl State {
                             let (_, page) = &self.goto_input;
                             match page.parse::<usize>() {
                                 Ok(page) => {
-                                    self.page = usize::clamp(page - 1, 0, self.pages_end());
+                                    self.page = usize::clamp(page - 1, 0, table.pages_end());
                                     shell.invalidate_layout();
                                     return event::Status::Captured;
                                 }
@@ -2809,7 +2783,7 @@ impl State {
 
                         editor.insert(c);
 
-                        let pages_end = table.raw.height() / self.page_limit;
+                        let pages_end = table.raw.height() / table.page_limit;
                         match value.parse::<usize>() {
                             Ok(page) if page > pages_end => *value = (pages_end + 1).to_string(),
                             Err(_) if value.is_empty() => {
@@ -2836,7 +2810,7 @@ impl State {
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
                         if let Ok(page) = value.parse::<usize>() {
                             let page = if page == 0 { 0 } else { page - 1 };
-                            self.page = usize::clamp(page, 0, self.pages_end());
+                            self.page = usize::clamp(page, 0, table.pages_end());
                             self.reset();
                             shell.invalidate_layout();
                             return event::Status::Captured;
@@ -2970,7 +2944,7 @@ impl State {
                     let scroll_bounds = {
                         let diff = padding.vertical()
                             + pagination.bounds().height.max(goto.bounds().height)
-                            + if self.multiple_pages() { spacing } else { 0.0 }
+                            + if table.multiple_pages() { spacing } else { 0.0 }
                             + status.bounds().height
                             + spacing
                             + headers.bounds().height;
@@ -2983,12 +2957,12 @@ impl State {
                     return self.update_cells(table, event, cells, cursor, shell, scroll_bounds);
                 }
 
-                if cursor.is_over(pagination.bounds()) && self.multiple_pages() {
+                if cursor.is_over(pagination.bounds()) && table.multiple_pages() {
                     self.reset();
-                    return self.update_pagination(event, pagination, cursor, shell);
+                    return self.update_pagination(table, event, pagination, cursor, shell);
                 }
 
-                if cursor.is_over(goto.bounds()) && self.multiple_pages() {
+                if cursor.is_over(goto.bounds()) && table.multiple_pages() {
                     return self.update_goto(table, event, goto, cursor, shell);
                 }
 
@@ -3005,7 +2979,8 @@ impl State {
                                 shell.publish(msg);
                             }
                         } else {
-                            let (row, column) = (index % self.page_limit, index / self.page_limit);
+                            let (row, column) =
+                                (index % table.page_limit, index / table.page_limit);
 
                             if let Some(callback) = table.on_cell_submit.as_ref() {
                                 let msg = callback(value, row, column);
@@ -3049,7 +3024,7 @@ impl State {
                         let scroll_bounds = {
                             let diff = padding.vertical()
                                 + pagination.bounds().height.max(goto.bounds().height)
-                                + if self.multiple_pages() { spacing } else { 0.0 }
+                                + if table.multiple_pages() { spacing } else { 0.0 }
                                 + status.bounds().height
                                 + spacing
                                 + headers.bounds().height;
@@ -3087,7 +3062,7 @@ impl State {
                 let scroll_bounds = {
                     let diff = padding.vertical()
                         + pagination.bounds().height.max(goto.bounds().height)
-                        + if self.multiple_pages() { spacing } else { 0.0 }
+                        + if table.multiple_pages() { spacing } else { 0.0 }
                         + status.bounds().height
                         + spacing
                         + headers.bounds().height;
@@ -3118,7 +3093,7 @@ impl State {
                 let scroll_bounds = {
                     let diff = padding.vertical()
                         + pagination.bounds().height.max(goto.bounds().height)
-                        + if self.multiple_pages() { spacing } else { 0.0 }
+                        + if table.multiple_pages() { spacing } else { 0.0 }
                         + status.bounds().height
                         + spacing
                         + headers.bounds().height;
@@ -3162,13 +3137,13 @@ impl State {
                     {
                         selection.grow(
                             0,
-                            self.page_limit.saturating_sub(1),
+                            table.page_limit.saturating_sub(1),
                             1,
-                            self.cols.saturating_sub(1),
+                            table.cols.saturating_sub(1),
                         );
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
-                        selection.move_right(self.cols.saturating_sub(1))
+                        selection.move_right(table.cols.saturating_sub(1))
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft)
                         if self.keyboard_modifiers.shift() =>
@@ -3181,14 +3156,14 @@ impl State {
                     {
                         selection.grow(
                             1,
-                            self.page_limit.saturating_sub(1),
+                            table.page_limit.saturating_sub(1),
                             0,
-                            self.cols.saturating_sub(1),
+                            table.cols.saturating_sub(1),
                         );
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown)
                     | keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                        selection.move_down(self.page_limit.saturating_sub(1))
+                        selection.move_down(table.page_limit.saturating_sub(1))
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp)
                         if self.keyboard_modifiers.shift() =>
@@ -3221,7 +3196,7 @@ impl State {
                     let scroll_bounds = {
                         let diff = padding.vertical()
                             + pagination.bounds().height.max(goto.bounds().height)
-                            + if self.multiple_pages() { spacing } else { 0.0 }
+                            + if table.multiple_pages() { spacing } else { 0.0 }
                             + status.bounds().height
                             + spacing
                             + headers.bounds().height;
