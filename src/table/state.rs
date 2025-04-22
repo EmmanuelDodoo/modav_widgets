@@ -4,7 +4,7 @@ use iced::{
         layout::{self, Limits, Node},
         mouse::{self, click},
         renderer::Quad,
-        text::Paragraph,
+        text::{self, Paragraph},
         Shell,
     },
     alignment::Horizontal,
@@ -28,18 +28,17 @@ const GOTO_PAGE: &str = "Page:";
 const GOTO_GO: &str = "Go";
 const CURSOR_BLINK_INTERVAL_MILLIS: u128 = 500;
 
-#[derive(Default)]
-pub struct State {
-    cells: Vec<Cell>,
-    numbering: Vec<Cell>,
-    headers: Vec<(Cell, Cell)>,
-    paginations: Vec<(Cell, String)>,
-    page_next: Cell,
-    page_back: Cell,
-    goto_input: (Cell, String),
-    goto_page: Cell,
-    goto_go: Cell,
-    status: (Cell, String),
+pub struct State<Renderer: text::Renderer> {
+    cells: Vec<Cell<Renderer>>,
+    numbering: Vec<Cell<Renderer>>,
+    headers: Vec<(Cell<Renderer>, Cell<Renderer>)>,
+    paginations: Vec<(Cell<Renderer>, String)>,
+    page_next: Cell<Renderer>,
+    page_back: Cell<Renderer>,
+    goto_input: (Cell<Renderer>, String),
+    goto_page: Cell<Renderer>,
+    goto_go: Cell<Renderer>,
+    status: (Cell<Renderer>, String),
     pages_padding: Padding,
     page: usize,
     page_size: Pixels,
@@ -58,7 +57,7 @@ pub struct State {
     selection: Option<Selection>,
 }
 
-impl State {
+impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
     /// The maximum number of page numbers displayed
     const PAGINATION_LIMIT: usize = 11;
     /// The maximum size of a cell
@@ -71,17 +70,51 @@ impl State {
     const KIND_MULT: f32 = 0.9;
 
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            cells: vec![],
+            numbering: vec![],
+            headers: vec![],
+            paginations: vec![],
+            page_next: Cell::<Renderer>::default(),
+            page_back: Cell::<Renderer>::default(),
+            goto_input: (Cell::<Renderer>::default(), String::default()),
+            goto_page: Cell::<Renderer>::default(),
+            goto_go: Cell::<Renderer>::default(),
+            status: (Cell::<Renderer>::default(), String::default()),
+            pages_padding: Padding::ZERO,
+            page: 0,
+            page_size: Pixels::ZERO,
+            pages_gap: 0.0,
+            cursor: utils::Cursor::default(),
+            is_focused: None,
+            last_click: None,
+            keyboard_modifiers: keyboard::Modifiers::default(),
+            is_text_dragging: false,
+            editing: None,
+            scroll_offset: Vector::default(),
+            cells_dim: Size::default(),
+            min_widths: vec![],
+            min_heights: vec![],
+            resizing: None,
+            selection: None,
+        }
     }
 
-    fn pre_layout<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) {
+    fn pre_layout<Message, Theme: Catalog>(
+        &mut self,
+        table: &Table<'_, Message, Theme, Renderer>,
+        font: Renderer::Font,
+        text_size: Pixels,
+    ) {
         self.pages_padding = Padding::from([2, 6]);
-        let size = table.text_size * 7.0 / 8.0;
+        let size = text_size * 7.0 / 8.0;
         self.page_size = size;
 
         let dimensions = (table.raw.height(), table.raw.width());
 
-        self.headers = vec![(Cell::default(), Cell::default()); dimensions.0];
+        self.headers = (0..dimensions.0)
+            .map(|_| (Cell::<Renderer>::default(), Cell::<Renderer>::default()))
+            .collect();
 
         let limit = table.page_limit;
 
@@ -107,59 +140,59 @@ impl State {
             self.min_heights.truncate(limit + 1);
         }
 
-        self.numbering = vec![Cell::default(); limit + 1];
+        self.numbering = (0..limit + 1)
+            .map(|_| Cell::<Renderer>::default())
+            .collect();
+
         let pages_end = table.pages_end() + 1;
 
-        self.paginations =
-            vec![(Cell::default(), String::default()); Self::PAGINATION_LIMIT.min(pages_end)];
+        self.paginations = (0..Self::PAGINATION_LIMIT.min(pages_end))
+            .map(|_| (Cell::<Renderer>::default(), String::default()))
+            .collect();
 
         self.status = {
             let value = match table.status.as_ref() {
                 Some(status) => status.clone(),
                 None => format!("{} rows × {} columns", dimensions.0, dimensions.1),
             };
-            let text = super::text(&value, Self::MAX_CELL, table.font, Horizontal::Left, size);
-            (Cell::new(text), value)
+            let text =
+                super::text::<Renderer>(&value, Self::MAX_CELL, font, Horizontal::Left, size);
+            (Cell::<Renderer>::new(text), value)
         };
 
-        self.cells = vec![Cell::default(); limit * dimensions.1];
+        self.cells = (0..limit * dimensions.1)
+            .map(|_| Cell::<Renderer>::default())
+            .collect();
 
         self.page_back = {
-            let text = super::text(BACK, Self::MAX_CELL, table.font, Horizontal::Center, size);
-            Cell::new(text)
+            let text =
+                super::text::<Renderer>(BACK, Self::MAX_CELL, font, Horizontal::Center, size);
+            Cell::<Renderer>::new(text)
         };
 
         self.page_next = {
-            let text = super::text(NEXT, Self::MAX_CELL, table.font, Horizontal::Center, size);
-            Cell::new(text)
+            let text =
+                super::text::<Renderer>(NEXT, Self::MAX_CELL, font, Horizontal::Center, size);
+            Cell::<Renderer>::new(text)
         };
 
         self.goto_page = {
-            let text = super::text(
-                GOTO_PAGE,
-                Self::MAX_CELL,
-                table.font,
-                Horizontal::Center,
-                size,
-            );
-            Cell::new(text)
+            let text =
+                super::text::<Renderer>(GOTO_PAGE, Self::MAX_CELL, font, Horizontal::Center, size);
+            Cell::<Renderer>::new(text)
         };
 
         self.goto_go = {
-            let text = super::text(
-                GOTO_GO,
-                Self::MAX_CELL,
-                table.font,
-                Horizontal::Center,
-                size,
-            );
-            Cell::new(text)
+            let text =
+                super::text::<Renderer>(GOTO_GO, Self::MAX_CELL, font, Horizontal::Center, size);
+            Cell::<Renderer>::new(text)
         };
 
         self.goto_input = {
             let value = (self.page + 1).to_string();
-            let text = super::text(&value, Self::MAX_CELL, table.font, Horizontal::Center, size);
-            (Cell::new(text), value)
+            let text =
+                super::text::<Renderer>(&value, Self::MAX_CELL, font, Horizontal::Center, size);
+            (Cell::<Renderer>::new(text), value)
         };
 
         self.pages_gap = 5.0;
@@ -208,10 +241,18 @@ impl State {
             Vector::new(new.x.clamp(width_diff, 0.0), new.y.clamp(height_diff, 0.0));
     }
 
-    fn layout_cells<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) -> Node {
-        let font = table.font;
+    fn layout_cells<Message, Theme: Catalog>(
+        &mut self,
+        table: &Table<'_, Message, Theme, Renderer>,
+        renderer: &Renderer,
+        font: Renderer::Font,
+    ) -> Node {
+        let header_font = table.header_font.unwrap_or_else(|| renderer.default_font());
+        let numbering_font = table
+            .numbering_font
+            .unwrap_or_else(|| renderer.default_font());
         let padding = table.cell_padding;
-        let size = table.text_size;
+        let size = table.text_size.unwrap_or_else(|| renderer.default_size());
 
         let gap = Self::CELL_GAP;
         // Adds numbering column
@@ -220,7 +261,7 @@ impl State {
         let page_limit = table.page_limit + 1;
 
         let numbering_max = dimensions.0;
-        let numbering_max = Cell::new(super::text(
+        let numbering_max = Cell::<Renderer>::new(super::text::<Renderer>(
             &numbering_max.to_string(),
             Self::MAX_CELL,
             font,
@@ -258,20 +299,18 @@ impl State {
                     };
                     let kind = kind.to_string();
 
-                    let font = Font {
-                        style: font::Style::Normal,
-                        ..font
-                    };
-                    let text = super::text(label, Self::MAX_CELL, font, Horizontal::Center, size);
+                    let text = super::text::<Renderer>(
+                        label,
+                        Self::MAX_CELL,
+                        header_font,
+                        Horizontal::Center,
+                        size,
+                    );
                     header.update(text);
-                    let font = Font {
-                        style: font::Style::Italic,
-                        ..font
-                    };
-                    let text = super::text(
+                    let text = super::text::<Renderer>(
                         &kind,
                         Self::MAX_CELL,
-                        font,
+                        header_font,
                         Horizontal::Center,
                         size * Self::KIND_MULT,
                     );
@@ -301,7 +340,8 @@ impl State {
                             .unwrap_or_default(),
                     };
 
-                    let text = super::text(value, Self::MAX_CELL, font, horizontal, size);
+                    let text =
+                        super::text::<Renderer>(value, Self::MAX_CELL, font, horizontal, size);
                     paragraph.update(text);
 
                     paragraph.min_bounds()
@@ -309,15 +349,11 @@ impl State {
             } else if row != 0 {
                 let paragraph = &mut self.numbering[row];
                 let row = (row - 1) + (table.page_limit * self.page);
-                let font = Font {
-                    style: font::Style::Italic,
-                    ..font
-                };
 
-                paragraph.update(super::text(
+                paragraph.update(super::text::<Renderer>(
                     &row.to_string(),
                     Self::MAX_CELL,
-                    font,
+                    numbering_font,
                     Horizontal::Right,
                     size,
                 ));
@@ -464,13 +500,13 @@ impl State {
 
     fn layout_pagination<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
+        font: Renderer::Font,
     ) -> Node {
         if table.raw.is_empty() {
             return Node::with_children(Size::ZERO, vec![Node::default(); 3]);
         }
 
-        let font = table.font;
         let gap = self.pages_gap;
         let pages_end = table.pages_end() + 1;
         let current_page = self.page + 1;
@@ -487,7 +523,7 @@ impl State {
 
         // Update paragraphs, register min width
         for (page, (cell, content)) in pages.into_iter().zip(self.paginations.iter_mut()) {
-            let text = super::text(
+            let text = super::text::<Renderer>(
                 &page,
                 Self::MAX_CELL,
                 font,
@@ -548,12 +584,15 @@ impl State {
         Node::with_children(total_size, vec![back, pages, next])
     }
 
-    fn layout_goto<Message, Theme: Catalog>(&mut self, table: &Table<'_, Message, Theme>) -> Node {
+    fn layout_goto<Message, Theme: Catalog>(
+        &mut self,
+        table: &Table<'_, Message, Theme, Renderer>,
+        font: Renderer::Font,
+    ) -> Node {
         if table.raw.is_empty() {
             return Node::with_children(Size::ZERO, vec![Node::default(); 3]);
         }
-        let font = table.font;
-        let max = Cell::new(super::text(
+        let max = Cell::<Renderer>::new(super::text::<Renderer>(
             &(table.pages_end() + 1).to_string(),
             Self::MAX_CELL,
             font,
@@ -566,7 +605,7 @@ impl State {
 
         let (input, value) = &mut self.goto_input;
 
-        input.update(super::text(
+        input.update(super::text::<Renderer>(
             value,
             Self::MAX_CELL,
             font,
@@ -598,7 +637,8 @@ impl State {
 
     fn layout_status<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
+        font: Renderer::Font,
         max_width: f32,
     ) -> Node {
         if table.raw.is_empty() {
@@ -612,10 +652,10 @@ impl State {
             None => value,
         };
 
-        cell.update(super::text(
+        cell.update(super::text::<Renderer>(
             value,
             bounds,
-            table.font,
+            font,
             Horizontal::Center,
             self.page_size,
         ));
@@ -627,16 +667,19 @@ impl State {
 
     pub fn layout<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
+        renderer: &Renderer,
         limits: Limits,
     ) -> Node {
+        let font = table.font.unwrap_or_else(|| renderer.default_font());
+        let text_size = table.text_size.unwrap_or_else(|| renderer.default_size());
         let spacing = if table.raw.is_empty() {
             0.0
         } else {
             table.spacing
         };
 
-        self.pre_layout(table);
+        self.pre_layout(table, font, text_size);
 
         let padding = table.padding;
 
@@ -646,14 +689,14 @@ impl State {
             .shrink(table.padding);
 
         let mut pagination = if table.multiple_pages() {
-            self.layout_pagination(table)
+            self.layout_pagination(table, font)
         } else {
             Node::default()
         };
         let pagination_size = pagination.size();
 
         let mut goto = if table.multiple_pages() {
-            self.layout_goto(table)
+            self.layout_goto(table, font)
         } else {
             Node::default()
         };
@@ -666,17 +709,19 @@ impl State {
 
         let actions_spacing = if table.multiple_pages() { spacing } else { 0.0 };
 
-        let mut status = self.layout_status(table, content_limits.max().width);
+        let mut status = self.layout_status(table, font, content_limits.max().width);
         let status_size = status.size();
         status.translate_mut(Vector::new(
             padding.left,
             padding.top + actions.height + actions_spacing,
         ));
 
-        let cells = self.layout_cells(table).translate(Vector::new(
-            padding.left,
-            padding.top + actions.height + actions_spacing + status_size.height + spacing,
-        ));
+        let cells = self
+            .layout_cells(table, renderer, font)
+            .translate(Vector::new(
+                padding.left,
+                padding.top + actions.height + actions_spacing + status_size.height + spacing,
+            ));
         let cells_size = cells.size();
 
         let total_size = Size::new(
@@ -745,7 +790,7 @@ impl State {
 
     fn draw_pagination<Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -941,7 +986,7 @@ impl State {
 
     fn draw_cells<Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -1316,7 +1361,7 @@ impl State {
         &self,
         renderer: &mut Renderer,
         style: Style,
-        cell: &Cell,
+        cell: &Cell<Renderer>,
         clipped_bounds: Rectangle,
         full_bounds: Rectangle,
         value: &str,
@@ -1430,7 +1475,7 @@ impl State {
 
     pub fn draw<Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -1635,7 +1680,7 @@ impl State {
 
     fn interaction_pagination<Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
@@ -1696,7 +1741,7 @@ impl State {
 
     pub fn mouse_interaction<Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
@@ -1736,7 +1781,7 @@ impl State {
 
     fn update_cells_click<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
         shell: &mut Shell<'_, Message>,
@@ -2052,7 +2097,8 @@ impl State {
 
     fn update_cells<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
+        renderer: &Renderer,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2063,8 +2109,9 @@ impl State {
             return event::Status::Ignored;
         }
 
-        let font = table.font;
-        let size = table.text_size;
+        let font = table.font.unwrap_or_else(|| renderer.default_font());
+        let header_font = table.header_font.unwrap_or_else(|| renderer.default_font());
+        let size = table.text_size.unwrap_or_else(|| renderer.default_size());
         let padding = table.cell_padding;
 
         if matches!(
@@ -2363,10 +2410,10 @@ impl State {
                             let mut editor = Editor::new(value, &mut self.cursor);
                             editor.insert(c);
 
-                            cell.update(super::text(
+                            cell.update(super::text::<Renderer>(
                                 value,
                                 Self::MAX_CELL,
-                                font,
+                                header_font,
                                 cell.horizontal_alignment(),
                                 size,
                             ));
@@ -2399,7 +2446,7 @@ impl State {
                             let mut editor = Editor::new(value, &mut self.cursor);
                             editor.insert(c);
 
-                            cell.update(super::text(
+                            cell.update(super::text::<Renderer>(
                                 value,
                                 Self::MAX_CELL,
                                 font,
@@ -2451,10 +2498,10 @@ impl State {
                         let mut editor = Editor::new(value, &mut self.cursor);
                         editor.backspace();
 
-                        cell.update(super::text(
+                        cell.update(super::text::<Renderer>(
                             value,
                             Self::MAX_CELL,
-                            font,
+                            if *is_header { header_font } else { font },
                             cell.horizontal_alignment(),
                             size,
                         ));
@@ -2475,10 +2522,10 @@ impl State {
                         let mut editor = Editor::new(value, &mut self.cursor);
                         editor.delete();
 
-                        cell.update(super::text(
+                        cell.update(super::text::<Renderer>(
                             value,
                             Self::MAX_CELL,
-                            font,
+                            if *is_header { header_font } else { font },
                             cell.horizontal_alignment(),
                             size,
                         ));
@@ -2546,7 +2593,7 @@ impl State {
 
     fn update_pagination<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2627,13 +2674,14 @@ impl State {
 
     fn update_goto<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
+        renderer: &Renderer,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
         shell: &mut Shell<'_, Message>,
     ) -> event::Status {
-        let font = table.font;
+        let font = table.font.unwrap_or_else(|| renderer.default_font());
 
         let mut children = layout.children();
 
@@ -2792,7 +2840,7 @@ impl State {
                             _ => {}
                         }
 
-                        cell.update(super::text(
+                        cell.update(super::text::<Renderer>(
                             value,
                             Self::MAX_CELL,
                             font,
@@ -2825,7 +2873,7 @@ impl State {
                     keyboard::Key::Named(keyboard::key::Named::Backspace) => {
                         let mut editor = Editor::new(value, &mut self.cursor);
                         editor.backspace();
-                        cell.update(super::text(
+                        cell.update(super::text::<Renderer>(
                             value,
                             Self::MAX_CELL,
                             font,
@@ -2837,7 +2885,7 @@ impl State {
                     keyboard::Key::Named(keyboard::key::Named::Delete) => {
                         let mut editor = Editor::new(value, &mut self.cursor);
                         editor.delete();
-                        cell.update(super::text(
+                        cell.update(super::text::<Renderer>(
                             value,
                             Self::MAX_CELL,
                             font,
@@ -2889,7 +2937,8 @@ impl State {
 
     pub fn on_update<Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme>,
+        table: &Table<'_, Message, Theme, Renderer>,
+        renderer: &Renderer,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2954,7 +3003,15 @@ impl State {
 
                         Size::new(width, height)
                     };
-                    return self.update_cells(table, event, cells, cursor, shell, scroll_bounds);
+                    return self.update_cells(
+                        table,
+                        renderer,
+                        event,
+                        cells,
+                        cursor,
+                        shell,
+                        scroll_bounds,
+                    );
                 }
 
                 if cursor.is_over(pagination.bounds()) && table.multiple_pages() {
@@ -2963,7 +3020,7 @@ impl State {
                 }
 
                 if cursor.is_over(goto.bounds()) && table.multiple_pages() {
-                    return self.update_goto(table, event, goto, cursor, shell);
+                    return self.update_goto(table, renderer, event, goto, cursor, shell);
                 }
 
                 match self.editing.take() {
@@ -3010,7 +3067,7 @@ impl State {
             {
                 match self.editing {
                     Some(Editing::Goto(_)) => {
-                        return self.update_goto(table, event, goto, cursor, shell);
+                        return self.update_goto(table, renderer, event, goto, cursor, shell);
                     }
                     Some(Editing::Cell { .. }) => {
                         let mut cells_children = cells.children();
@@ -3037,6 +3094,7 @@ impl State {
                         };
                         return self.update_cells(
                             table,
+                            renderer,
                             event,
                             cells,
                             cursor,
@@ -3072,7 +3130,15 @@ impl State {
 
                     Size::new(width, height)
                 };
-                return self.update_cells(table, event, cells, cursor, shell, scroll_bounds);
+                return self.update_cells(
+                    table,
+                    renderer,
+                    event,
+                    cells,
+                    cursor,
+                    shell,
+                    scroll_bounds,
+                );
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 let delta = match *delta {
@@ -3182,7 +3248,7 @@ impl State {
             }
             Event::Keyboard(keyboard::Event::KeyPressed { .. }) => match self.editing {
                 Some(Editing::Goto(_)) => {
-                    return self.update_goto(table, event, goto, cursor, shell)
+                    return self.update_goto(table, renderer, event, goto, cursor, shell)
                 }
                 Some(Editing::Cell { .. }) => {
                     let mut cells_children = cells.children();
@@ -3206,7 +3272,15 @@ impl State {
 
                         Size::new(width, height)
                     };
-                    return self.update_cells(table, event, cells, cursor, shell, scroll_bounds);
+                    return self.update_cells(
+                        table,
+                        renderer,
+                        event,
+                        cells,
+                        cursor,
+                        shell,
+                        scroll_bounds,
+                    );
                 }
                 None => {}
             },

@@ -16,7 +16,7 @@ use iced::{
         tooltip::Position,
         vertical_space, Tooltip,
     },
-    Element, Length, Task, Theme,
+    Element, Font, Length, Task, Theme,
 };
 
 use modav_core::repr::col_sheet::ColumnSheet;
@@ -136,6 +136,14 @@ impl App {
                 } else {
                     None
                 }
+            })
+            .header_font(Font {
+                style: font::Style::Italic,
+                ..Default::default()
+            })
+            .numbering_font(Font {
+                style: font::Style::Italic,
+                ..Default::default()
             })
             .status_maybe(self.status.clone())
             .on_selection(Message::Selection)

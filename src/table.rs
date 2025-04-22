@@ -24,16 +24,17 @@ pub use utils::{KeyPress, Selection};
 pub mod style;
 use style::{Catalog, Style, StyleFn};
 
-type Cell = Plain<iced_graphics::text::Paragraph>;
+type Cell<Renderer> = Plain<<Renderer as text::Renderer>::Paragraph>;
 
 const PAGINATION_ELLIPSIS: &str = "•••";
 /// The maximum number of items on a page
 const PAGE_LIMIT: usize = 25;
 
 /// A table widget.
-pub struct Table<'a, Message, Theme>
+pub struct Table<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
+    Renderer: text::Renderer,
 {
     raw: &'a ColumnSheet,
     rows: usize,
@@ -41,8 +42,10 @@ where
     page_limit: usize,
     width: Length,
     height: Length,
-    text_size: Pixels,
-    font: Font,
+    text_size: Option<Pixels>,
+    font: Option<Renderer::Font>,
+    header_font: Option<Renderer::Font>,
+    numbering_font: Option<Renderer::Font>,
     spacing: f32,
     padding: Padding,
     cell_padding: Padding,
@@ -56,9 +59,10 @@ where
     on_keypress: Option<Box<dyn Fn(KeyPress) -> Option<Message> + 'a>>,
 }
 
-impl<'a, Message, Theme> Table<'a, Message, Theme>
+impl<'a, Message, Theme, Renderer> Table<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
+    Renderer: text::Renderer,
 {
     /// Creates a new [`Table`] widget with the given sheet.
     pub fn new(sheet: &'a ColumnSheet) -> Self {
@@ -70,11 +74,13 @@ where
             page_limit: limit,
             width: Length::Shrink,
             height: Length::Shrink,
-            text_size: 16.0.into(),
+            text_size: None,
             padding: [10, 15].into(),
             cell_padding: [2, 5].into(),
-            font: Font::default(),
-            spacing: 20.0,
+            font: None,
+            header_font: None,
+            numbering_font: None,
+            spacing: 10.0,
             on_cell_input: None,
             on_cell_submit: None,
             on_header_input: None,
@@ -107,13 +113,25 @@ where
 
     /// Sets the text size of the [`Table`].
     pub fn text_size(mut self, size: impl Into<Pixels>) -> Self {
-        self.text_size = size.into();
+        self.text_size = Some(size.into());
         self
     }
 
     /// Sets the [`Font`] of the [`Table`].
-    pub fn font(mut self, font: Font) -> Self {
-        self.font = font;
+    pub fn font(mut self, font: Renderer::Font) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// Sets the [`Font`] used for headers in the [`Table`].
+    pub fn header_font(mut self, font: Renderer::Font) -> Self {
+        self.header_font = Some(font);
+        self
+    }
+
+    /// Sets the [`Font`] used for row numbering in the [`Table`].
+    pub fn numbering_font(mut self, font: Renderer::Font) -> Self {
+        self.numbering_font = Some(font);
         self
     }
 
@@ -206,26 +224,28 @@ where
     }
 }
 
-impl<Message, Theme> Widget<Message, Theme, Renderer> for Table<'_, Message, Theme>
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Table<'_, Message, Theme, Renderer>
 where
     Theme: Catalog,
+    Renderer: text::Renderer + advanced::Renderer + 'static,
 {
     fn tag(&self) -> Tag {
-        Tag::of::<State>()
+        Tag::of::<State<Renderer>>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(State::new())
+        tree::State::new(State::<Renderer>::new())
     }
 
     fn size(&self) -> iced::Size<Length> {
         Size::new(self.width, self.height)
     }
 
-    fn layout(&self, tree: &mut Tree, _renderer: &Renderer, limits: &Limits) -> Node {
-        let state = tree.state.downcast_mut::<State>();
+    fn layout(&self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
+        let state = tree.state.downcast_mut::<State<Renderer>>();
 
-        state.layout(self, *limits)
+        state.layout(self, renderer, *limits)
     }
 
     fn draw(
@@ -238,7 +258,7 @@ where
         cursor: iced::advanced::mouse::Cursor,
         viewport: &iced::Rectangle,
     ) {
-        let state = tree.state.downcast_ref::<State>();
+        let state = tree.state.downcast_ref::<State<Renderer>>();
         let bounds = layout.bounds();
         let style = theme.style(&self.class);
 
@@ -282,7 +302,7 @@ where
             return mouse::Interaction::None;
         }
 
-        let state = state.state.downcast_ref::<State>();
+        let state = state.state.downcast_ref::<State<Renderer>>();
         state.mouse_interaction(self, layout, cursor)
     }
 
@@ -292,33 +312,35 @@ where
         event: iced::Event,
         layout: layout::Layout<'_>,
         cursor: advanced::mouse::Cursor,
-        _renderer: &Renderer,
+        renderer: &Renderer,
         _clipboard: &mut dyn advanced::Clipboard,
         shell: &mut advanced::Shell<'_, Message>,
         _viewport: &Rectangle,
     ) -> event::Status {
-        let state = state.state.downcast_mut::<State>();
-        state.on_update(self, event, layout, cursor, shell)
+        let state = state.state.downcast_mut::<State<Renderer>>();
+        state.on_update(self, renderer, event, layout, cursor, shell)
     }
 }
 
-impl<'a, Message, Theme> From<Table<'a, Message, Theme>> for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> From<Table<'a, Message, Theme, Renderer>>
+    for Element<'a, Message, Theme, Renderer>
 where
     Message: 'a,
     Theme: Catalog + 'a,
+    Renderer: text::Renderer + 'static,
 {
-    fn from(value: Table<'a, Message, Theme>) -> Self {
+    fn from(value: Table<'a, Message, Theme, Renderer>) -> Self {
         Element::new(value)
     }
 }
 
-fn text(
+fn text<Renderer: text::Renderer>(
     content: &str,
     bounds: Size,
-    font: Font,
+    font: Renderer::Font,
     horizontal: Horizontal,
     size: Pixels,
-) -> text::Text<&str> {
+) -> text::Text<&str, Renderer::Font> {
     text::Text {
         content,
         bounds,
@@ -437,7 +459,12 @@ fn measure_cursor_and_scroll_offset(
     (grapheme_position.x, offset)
 }
 
-fn offset(text_bounds: Rectangle, value: &str, state: &State, cell: &Cell) -> f32 {
+fn offset<Renderer: text::Renderer>(
+    text_bounds: Rectangle,
+    value: &str,
+    state: &State<Renderer>,
+    cell: &Cell<Renderer>,
+) -> f32 {
     if state.is_focused() {
         let cursor = state.cursor();
 
@@ -454,14 +481,14 @@ fn offset(text_bounds: Rectangle, value: &str, state: &State, cell: &Cell) -> f3
     }
 }
 
-fn find_cursor_position(
+fn find_cursor_position<Renderer: text::Renderer>(
     text_bounds: Rectangle,
     value: &str,
-    state: &State,
-    cell: &Cell,
+    state: &State<Renderer>,
+    cell: &Cell<Renderer>,
     x: f32,
 ) -> Option<usize> {
-    let offset = offset(text_bounds, value, state, cell);
+    let offset = offset::<Renderer>(text_bounds, value, state, cell);
     let value = value.to_string();
 
     let char_offset = cell
