@@ -55,6 +55,7 @@ pub struct State<Renderer: text::Renderer> {
     min_heights: Vec<f32>,
     resizing: Option<Resizing>,
     selection: Option<Selection>,
+    page_limit: usize,
 }
 
 impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
@@ -97,6 +98,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             min_heights: vec![],
             resizing: None,
             selection: None,
+            page_limit: 0,
         }
     }
 
@@ -106,6 +108,11 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         font: Renderer::Font,
         text_size: Pixels,
     ) {
+        if self.page_limit == table.page_limit {
+            return;
+        }
+        self.page_limit = table.page_limit;
+
         self.pages_padding = Padding::from([2, 6]);
         let size = text_size * 7.0 / 8.0;
         self.page_size = size;
