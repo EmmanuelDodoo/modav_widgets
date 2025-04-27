@@ -1,5 +1,3 @@
-#[allow(unused_imports)]
-use super::Table;
 use iced::{Background, Border, Color, Theme};
 
 #[derive(Debug, Clone, Copy)]

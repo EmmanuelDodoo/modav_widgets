@@ -9,17 +9,14 @@ use iced::{
         Widget,
     },
     alignment::{self, Horizontal, Vertical},
-    event, Background, Color, Element, Font, Length, Padding, Pixels, Point, Rectangle, Renderer,
-    Size,
+    event, Background, Color, Element, Length, Padding, Pixels, Point, Rectangle, Size,
 };
-
-use modav_core::repr::col_sheet::{CellRef, ColumnSheet, DataType};
 
 mod state;
 use state::*;
 
 mod utils;
-pub use utils::{KeyPress, Selection};
+pub use utils::{KeyPress, RawTable, Selection};
 
 pub mod style;
 use style::{Catalog, Style, StyleFn};
@@ -31,12 +28,13 @@ const PAGINATION_ELLIPSIS: &str = "•••";
 const PAGE_LIMIT: usize = 25;
 
 /// A table widget.
-pub struct Table<'a, Message, Theme, Renderer>
+pub struct Table<'a, Raw, Message, Theme, Renderer>
 where
     Theme: Catalog,
     Renderer: text::Renderer,
+    Raw: RawTable,
 {
-    raw: &'a ColumnSheet,
+    raw: &'a Raw,
     rows: usize,
     cols: usize,
     page_limit: usize,
@@ -59,18 +57,19 @@ where
     on_keypress: Option<Box<dyn Fn(KeyPress) -> Option<Message> + 'a>>,
 }
 
-impl<'a, Message, Theme, Renderer> Table<'a, Message, Theme, Renderer>
+impl<'a, Raw, Message, Theme, Renderer> Table<'a, Raw, Message, Theme, Renderer>
 where
     Theme: Catalog,
     Renderer: text::Renderer,
+    Raw: RawTable,
 {
     /// Creates a new [`Table`] widget with the given sheet.
-    pub fn new(sheet: &'a ColumnSheet) -> Self {
-        let limit = PAGE_LIMIT.min(sheet.height());
+    pub fn new(raw: &'a Raw) -> Self {
+        let limit = PAGE_LIMIT.min(raw.height());
         Self {
-            raw: sheet,
-            rows: sheet.height(),
-            cols: sheet.width(),
+            raw,
+            rows: raw.height(),
+            cols: raw.width(),
             page_limit: limit,
             width: Length::Shrink,
             height: Length::Shrink,
@@ -224,11 +223,12 @@ where
     }
 }
 
-impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for Table<'_, Message, Theme, Renderer>
+impl<Raw, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Table<'_, Raw, Message, Theme, Renderer>
 where
     Theme: Catalog,
     Renderer: text::Renderer + advanced::Renderer + 'static,
+    Raw: RawTable,
 {
     fn tag(&self) -> Tag {
         Tag::of::<State<Renderer>>()
@@ -322,14 +322,15 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<Table<'a, Message, Theme, Renderer>>
+impl<'a, Raw, Message, Theme, Renderer> From<Table<'a, Raw, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: 'a,
     Theme: Catalog + 'a,
     Renderer: text::Renderer + 'static,
+    Raw: RawTable,
 {
-    fn from(value: Table<'a, Message, Theme, Renderer>) -> Self {
+    fn from(value: Table<'a, Raw, Message, Theme, Renderer>) -> Self {
         Element::new(value)
     }
 }
@@ -379,27 +380,6 @@ fn draw<Renderer>(
     };
 
     renderer.fill_paragraph(paragraph, Point::new(x, y), text_color, *viewport);
-}
-
-fn cell_to_string(cell: CellRef<'_>) -> String {
-    match cell {
-        CellRef::Text(value) => value.to_owned(),
-        CellRef::I32(value) => value.to_string(),
-        CellRef::U32(value) => value.to_string(),
-        CellRef::ISize(value) => value.to_string(),
-        CellRef::USize(value) => value.to_string(),
-        CellRef::F32(value) => value.to_string(),
-        CellRef::F64(value) => value.to_string(),
-        CellRef::Bool(value) => value.to_string(),
-        CellRef::None => "None".to_owned(),
-    }
-}
-
-fn type_alignment(kind: DataType) -> Horizontal {
-    match kind {
-        DataType::Text | DataType::Bool => Horizontal::Left,
-        _ => Horizontal::Right,
-    }
 }
 
 fn gen_pagination(start: isize, end: isize, curr: isize) -> Vec<String> {
@@ -529,25 +509,4 @@ fn word_boundary(text: &str, index: usize) -> (usize, usize) {
     }
 
     (start, end)
-}
-
-/// Returns true if the provided `character` is accepted by the given `DataType`
-fn column_filter(kind: DataType, character: char) -> bool {
-    match kind {
-        DataType::Text => true,
-        DataType::I32 | DataType::ISize => {
-            character.is_ascii_digit() || character == '-' || character == '_'
-        }
-        DataType::U32 | DataType::USize => character.is_ascii_digit() || character == '_',
-        DataType::F32 | DataType::F64 => {
-            character.is_ascii_digit() || character == '-' || character == '_'
-        }
-        DataType::Bool => {
-            let chars = [
-                't', 'T', 'r', 'R', 'u', 'U', 'e', 'E', 'f', 'F', 'a', 'A', 'l', 'L', 's', 'S',
-            ];
-
-            chars.contains(&character)
-        }
-    }
 }

@@ -8,18 +8,16 @@ use iced::{
         Shell,
     },
     alignment::Horizontal,
-    event, font, keyboard,
+    event, keyboard,
     time::{Duration, Instant},
-    touch, window, Background, Color, Event, Font, Padding, Pixels, Point, Rectangle, Renderer,
-    Size, Vector,
+    touch, window, Background, Color, Event, Padding, Pixels, Point, Rectangle, Size, Vector,
 };
 
 use super::style::{Catalog, Style};
-use super::utils::{self, Editor, KeyPress, Resizing, Selection};
+use super::utils::{self, Editor, KeyPress, RawTable, Resizing, Selection};
 use super::{
-    alignment_offset, cell_to_string, column_filter, draw, find_cursor_position, gen_pagination,
-    measure_cursor_and_scroll_offset, type_alignment, word_boundary, Cell, Table,
-    PAGINATION_ELLIPSIS,
+    alignment_offset, draw, find_cursor_position, gen_pagination, measure_cursor_and_scroll_offset,
+    word_boundary, Cell, Table, PAGINATION_ELLIPSIS,
 };
 
 const BACK: &str = "‹ Back";
@@ -102,9 +100,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    fn pre_layout<Message, Theme: Catalog>(
+    fn pre_layout<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         font: Renderer::Font,
         text_size: Pixels,
     ) {
@@ -248,9 +246,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             Vector::new(new.x.clamp(width_diff, 0.0), new.y.clamp(height_diff, 0.0));
     }
 
-    fn layout_cells<Message, Theme: Catalog>(
+    fn layout_cells<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &Renderer,
         font: Renderer::Font,
     ) -> Node {
@@ -289,9 +287,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
             let size = if column != 0 {
                 let column = column - 1;
-                let col = table.raw.get_col(column).expect("Missing column in sheet");
-                let kind = col.kind();
-                let horizontal = type_alignment(kind);
+                let kind = table.raw.column_kind(column).expect("Missing table column");
+                let horizontal = table.raw.kind_alignment(&kind);
 
                 if row == 0 {
                     let (header, knd) = &mut self.headers[column];
@@ -302,7 +299,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             is_header: true,
                             ..
                         }) if *index == column => value,
-                        _ => &col.label().map(ToOwned::to_owned).unwrap_or_default(),
+                        _ => &table.raw.column_header(column).unwrap_or_default(),
                     };
                     let kind = kind.to_string();
 
@@ -341,10 +338,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             is_header: false,
                             ..
                         }) if *index == idx => value,
-                        _ => &col
-                            .data_ref(row)
-                            .map(|cell| cell_to_string(cell))
-                            .unwrap_or_default(),
+                        _ => &table.raw.cell(row, column).unwrap_or_default(),
                     };
 
                     let text =
@@ -505,9 +499,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         Node::with_children(size, vec![numbering, headers, cells])
     }
 
-    fn layout_pagination<Message, Theme: Catalog>(
+    fn layout_pagination<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         font: Renderer::Font,
     ) -> Node {
         if table.raw.is_empty() {
@@ -591,9 +585,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         Node::with_children(total_size, vec![back, pages, next])
     }
 
-    fn layout_goto<Message, Theme: Catalog>(
+    fn layout_goto<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         font: Renderer::Font,
     ) -> Node {
         if table.raw.is_empty() {
@@ -642,9 +636,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         Node::with_children(total_size, vec![page, input, go])
     }
 
-    fn layout_status<Message, Theme: Catalog>(
+    fn layout_status<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         font: Renderer::Font,
         max_width: f32,
     ) -> Node {
@@ -672,9 +666,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         Node::new(size)
     }
 
-    pub fn layout<Message, Theme: Catalog>(
+    pub fn layout<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &Renderer,
         limits: Limits,
     ) -> Node {
@@ -795,9 +789,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    fn draw_pagination<Message, Theme: Catalog>(
+    fn draw_pagination<Raw: RawTable, Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -991,9 +985,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    fn draw_cells<Message, Theme: Catalog>(
+    fn draw_cells<Raw: RawTable, Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -1480,9 +1474,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    pub fn draw<Message, Theme: Catalog>(
+    pub fn draw<Raw: RawTable, Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &mut Renderer,
         layout: layout::Layout<'_>,
         style: Style,
@@ -1685,9 +1679,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         mouse::Interaction::None
     }
 
-    fn interaction_pagination<Message, Theme: Catalog>(
+    fn interaction_pagination<Raw: RawTable, Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
@@ -1746,9 +1740,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         mouse::Interaction::None
     }
 
-    pub fn mouse_interaction<Message, Theme: Catalog>(
+    pub fn mouse_interaction<Raw: RawTable, Message, Theme: Catalog>(
         &self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
@@ -1786,9 +1780,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         mouse::Interaction::None
     }
 
-    fn update_cells_click<Message, Theme: Catalog>(
+    fn update_cells_click<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
         shell: &mut Shell<'_, Message>,
@@ -1889,12 +1883,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                 let (idx, cell, value) = if is_header {
                     let (cell, _) = &self.headers[idx];
-                    let col = table
-                        .raw
-                        .get_col(idx)
-                        .expect("Cells update: Missing column in sheet");
 
-                    let value = col.label().unwrap_or_default().to_owned();
+                    let value = table.raw.column_header(idx).unwrap_or_default();
 
                     (idx, cell, value)
                 } else {
@@ -1903,12 +1893,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     let (row, column) = (idx % table.page_limit, idx / table.page_limit);
                     let row = row + (self.page * table.page_limit);
 
-                    let col = table
-                        .raw
-                        .get_col(column)
-                        .expect("Cells update: Missing column in sheet");
-
-                    let value = col.data_ref(row).map(cell_to_string).unwrap_or_default();
+                    let value = table.raw.cell(row, column).unwrap_or_default();
 
                     (idx, cell, value)
                 };
@@ -2102,9 +2087,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    fn update_cells<Message, Theme: Catalog>(
+    fn update_cells<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &Renderer,
         event: event::Event,
         layout: layout::Layout<'_>,
@@ -2190,12 +2175,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                         let (idx, cell, value) = if is_header {
                             let (cell, _) = &self.headers[idx];
-                            let col = table
-                                .raw
-                                .get_col(idx)
-                                .expect("Cells update: Missing column in sheet");
 
-                            let value = col.label().unwrap_or_default().to_owned();
+                            let value = table.raw.column_header(idx).unwrap_or_default();
 
                             (idx, cell, value)
                         } else {
@@ -2204,12 +2185,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             let (row, column) = (idx % table.page_limit, idx / table.page_limit);
                             let row = row + (self.page * table.page_limit);
 
-                            let col = table
-                                .raw
-                                .get_col(column)
-                                .expect("Cells update: Missing column in sheet");
-
-                            let value = col.data_ref(row).map(cell_to_string).unwrap_or_default();
+                            let value = table.raw.cell(row, column).unwrap_or_default();
 
                             (idx, cell, value)
                         };
@@ -2388,9 +2364,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     let (cell, _) = &mut self.headers[index];
                     let col = table
                         .raw
-                        .get_col(index)
-                        .expect("Cells update: Missing column in sheet")
-                        .kind();
+                        .column_kind(index)
+                        .expect("Cells update: Missing column in sheet");
+
                     (cell, col, 0, index + 1)
                 } else {
                     let cell = &mut self.cells[index];
@@ -2399,9 +2375,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                     let col = table
                         .raw
-                        .get_col(column)
-                        .expect("Cells update: Missing column in sheet")
-                        .kind();
+                        .column_kind(column)
+                        .expect("Cells update: Missing column in sheet");
 
                     (cell, col, row, column)
                 };
@@ -2448,7 +2423,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         if let Some(c) = text
                             .chars()
                             .next()
-                            .filter(|c| !c.is_control() && column_filter(col_kind, *c))
+                            .filter(|c| !c.is_control() && table.raw.column_filter(&col_kind, *c))
                         {
                             let mut editor = Editor::new(value, &mut self.cursor);
                             editor.insert(c);
@@ -2598,9 +2573,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    fn update_pagination<Message, Theme: Catalog>(
+    fn update_pagination<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         event: event::Event,
         layout: layout::Layout<'_>,
         cursor: mouse::Cursor,
@@ -2679,9 +2654,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    fn update_goto<Message, Theme: Catalog>(
+    fn update_goto<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &Renderer,
         event: event::Event,
         layout: layout::Layout<'_>,
@@ -2942,9 +2917,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
-    pub fn on_update<Message, Theme: Catalog>(
+    pub fn on_update<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
-        table: &Table<'_, Message, Theme, Renderer>,
+        table: &Table<'_, Raw, Message, Theme, Renderer>,
         renderer: &Renderer,
         event: event::Event,
         layout: layout::Layout<'_>,
