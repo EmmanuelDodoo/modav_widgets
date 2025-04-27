@@ -1,5 +1,7 @@
-use iced::{keyboard, mouse, Point, Rectangle, Size, Vector};
+use iced::{alignment::Horizontal, keyboard, mouse, Point, Rectangle, Size, Vector};
 use std::collections::HashSet;
+
+use super::Table;
 use std::ops::RangeInclusive;
 
 #[derive(Debug, Clone, Copy)]
@@ -598,4 +600,35 @@ pub struct KeyPress {
     pub modifiers: keyboard::Modifiers,
     /// The text produced by the key press.
     pub text: Option<String>,
+}
+
+/// The underlying data type for a [`Table`] widget.
+pub trait RawTable {
+    /// The type of values in a column
+    type ColumnKind: std::fmt::Display;
+
+    /// Returns the number of data rows (excluding header rows) in the [`RawTable`].
+    fn height(&self) -> usize;
+
+    /// Returns the number of data columns in the [`RawTable`].
+    fn width(&self) -> usize;
+
+    /// Returns the header for the column at `index` if it exists.
+    fn column_header(&self, index: usize) -> Option<String>;
+
+    /// Returns the `ColumnKind` for the column at `index` if it exists.
+    fn column_kind(&self, index: usize) -> Option<Self::ColumnKind>;
+
+    /// Returns the value at the specified row and column in the [RawTable],
+    /// if it exists.
+    fn cell(&self, row: usize, column: usize) -> Option<String>;
+
+    /// Returns true if the [`RawTable`] has no cells.
+    fn is_empty(&self) -> bool;
+
+    /// Returns `true` if the `character` is accepted by the specified `ColumnKind`.
+    fn column_filter(&self, kind: &Self::ColumnKind, character: char) -> bool;
+
+    /// Returns the [`Horizontal`] column alignment for the specified `ColumnKind`.
+    fn kind_alignment(&self, kind: &Self::ColumnKind) -> Horizontal;
 }
