@@ -1,9 +1,19 @@
 [package]
-name = "temp"
+name = "widgets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
-[dependencies]
+[workspace]
+members = ["highlighter"]
+
+[workspace.dependencies]
+highlighter = { version = "0.1.0", path = "highlighter" }
 iced = { version = "0.13.1", features = [
     "advanced",
     "highlighter",
@@ -11,4 +21,10 @@ iced = { version = "0.13.1", features = [
     "canvas",
 ] }
 
-syntect = { version = "5.2", features = [] }
+[dependencies]
+iced.workspace = true
+highlighter.workspace = true
+
+[[example]]
+name = "highlighter"
+path = "examples/highlighter/highlighter.rs"

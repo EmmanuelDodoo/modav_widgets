@@ -1,7 +1,7 @@
 Sessions()
 
-vim.g.builder = "cargo run"
+vim.g.builder = "cargo run --example highlighter"
 
 vim.keymap.set("n", "<leader>c", function()
-    Run("cargo check")
+    Run("cargo clippy")
 end)
