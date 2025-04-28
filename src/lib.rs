@@ -1,3 +1,3 @@
 mod custom;
-mod highlighter;
-
+#[allow(unused_imports)]
+use custom::menu::*;

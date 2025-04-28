@@ -153,15 +153,6 @@ impl App {
     }
 }
 
-pub async fn load_file() -> Result<String, std::io::ErrorKind> {
-    let path = "./src/main.rs";
-    let res = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|err| err.kind());
-
-    res
-}
-
 pub fn cell_to_string(cell: CellRef<'_>) -> String {
     match cell {
         CellRef::Text(value) => value.to_owned(),

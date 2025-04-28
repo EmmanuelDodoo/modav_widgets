@@ -1,0 +1,10 @@
+[package]
+name = "highlighter"
+description = "A csv highlighter for Iced"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+syntect = { version = "5.2" }
+iced = {workspace = true, features = ["highlighter"]}
