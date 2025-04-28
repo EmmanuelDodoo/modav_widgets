@@ -1,49 +1,18 @@
-#![allow(unused_imports, dead_code)]
 use iced::{
-    alignment::{Horizontal, Vertical},
-    application, font,
-    highlighter::{Highlighter, Settings},
-    keyboard,
-    widget::{
-        button, center, column, container,
-        container::bordered_box,
-        horizontal_space, row, scrollable,
-        scrollable::{Anchor, Direction, Scrollbar},
-        text,
-        text_editor::Action,
-        text_editor::{Content, TextEditor},
-        text_input,
-        tooltip::Position,
-        vertical_space, Tooltip,
-    },
+    alignment::Horizontal,
+    application, font, keyboard,
+    widget::{button, column, container, row, text, vertical_space},
     Element, Font, Length, Task, Theme,
 };
 
 use modav_core::repr::col_sheet::{CellRef, ColumnSheet, DataType};
 
-mod custom;
-
-use custom::menu::*;
-
-mod highlighter;
-use highlighter::*;
-
-mod table;
-use table::*;
+use table::{RawTable, Selection, Table};
 
 fn main() -> iced::Result {
     application("Playground", App::update, App::view)
         .theme(App::theme)
-        .run_with(|| {
-            let font = font::load(include_bytes!("../fontello.ttf")).map(|_| Message::None);
-
-            (App::new(), font)
-        })
-}
-
-struct Section {
-    id: usize,
-    content: Content,
+        .run()
 }
 
 #[derive(Debug, Clone)]
@@ -54,25 +23,26 @@ enum Message {
     Selection(Selection),
     AddLimit,
     SubLimit,
-    None,
     Light,
     Dark,
 }
 
 struct App {
-    sections: Vec<Section>,
-    id_tracker: usize,
     theme: Theme,
-    sht: ColumnSheet,
+    sht: Wrapper,
     status: Option<String>,
     limit: usize,
 }
 
+impl Default for App {
+    fn default() -> Self {
+        App::new()
+    }
+}
+
 impl App {
     fn new() -> Self {
-        //let path = "temp/air.csv".to_owned();
-        //let path = "temp/empty.csv".to_owned();
-        let path = "temp/mid1.csv".to_owned();
+        let path = "./examples/table/mid1.csv";
         let config = modav_core::repr::Config::new(path)
             .trim(true)
             .types(modav_core::repr::TypesStrategy::Infer)
@@ -81,9 +51,7 @@ impl App {
 
         Self {
             theme: Theme::TokyoNightStorm,
-            sections: vec![],
-            id_tracker: 0,
-            sht,
+            sht: Wrapper(sht),
             status: None,
             limit: 15,
         }
@@ -99,14 +67,14 @@ impl App {
             Message::Light => self.theme = Theme::Light,
             Message::Dark => self.theme = Theme::TokyoNightStorm,
             Message::Cell(value, row, column) => {
-                if let Err(error) = self.sht.set_cell(value, column, row) {
+                if let Err(error) = self.sht.0.set_cell(value, column, row) {
                     self.status.replace(error.to_string());
                 } else {
                     self.status.take();
                 }
             }
             Message::Header(value, column) => {
-                if let Err(error) = self.sht.set_col_header(column, value) {
+                if let Err(error) = self.sht.0.set_col_header(column, value) {
                     self.status.replace(error.to_string());
                 } else {
                     self.status.take();
@@ -117,7 +85,6 @@ impl App {
             }
             Message::AddLimit => self.limit += 1,
             Message::SubLimit => self.limit = (self.limit - 1).max(1),
-            Message::None => {}
         };
 
         Task::none()
@@ -209,32 +176,35 @@ pub fn cell_to_string(cell: CellRef<'_>) -> String {
     }
 }
 
-impl RawTable for ColumnSheet {
+struct Wrapper(ColumnSheet);
+
+impl RawTable for Wrapper {
     type ColumnKind = DataType;
 
     fn height(&self) -> usize {
-        self.height()
+        self.0.height()
     }
 
     fn width(&self) -> usize {
-        self.width()
+        self.0.width()
     }
 
     fn column_header(&self, index: usize) -> Option<String> {
-        self.get_col(index)
+        self.0
+            .get_col(index)
             .and_then(|column| column.label().map(ToOwned::to_owned))
     }
 
     fn column_kind(&self, index: usize) -> Option<Self::ColumnKind> {
-        self.get_col(index).map(|column| column.kind())
+        self.0.get_col(index).map(|column| column.kind())
     }
 
     fn cell(&self, row: usize, column: usize) -> Option<String> {
-        self.get_cell(column, row).map(cell_to_string)
+        self.0.get_cell(column, row).map(cell_to_string)
     }
 
     fn is_empty(&self) -> bool {
-        self.is_empty()
+        self.0.is_empty()
     }
 
     fn column_filter(&self, kind: &Self::ColumnKind, character: char) -> bool {

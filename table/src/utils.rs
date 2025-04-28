@@ -1,6 +1,7 @@
 use iced::{alignment::Horizontal, keyboard, mouse, Point, Rectangle, Size, Vector};
 use std::collections::HashSet;
 
+#[allow(unused_imports)]
 use super::Table;
 use std::ops::RangeInclusive;
 
