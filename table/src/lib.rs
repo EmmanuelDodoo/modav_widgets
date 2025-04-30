@@ -350,7 +350,7 @@ fn text<Renderer: text::Renderer>(
         horizontal_alignment: horizontal,
         vertical_alignment: Vertical::Center,
         font,
-        shaping: Shaping::default(),
+        shaping: Shaping::Advanced,
         wrapping: Wrapping::Word,
     }
 }
