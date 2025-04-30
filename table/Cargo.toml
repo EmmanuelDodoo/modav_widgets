@@ -5,5 +5,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-iced_graphics = "0.13.0"
 iced = { workspace = true, features = ["advanced"] }
