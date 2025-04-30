@@ -7,7 +7,7 @@ use iced::{
 
 use modav_core::repr::col_sheet::{CellRef, ColumnSheet, DataType};
 
-use table::{RawTable, Selection, Table};
+use table::{Action, RawTable, Table};
 
 fn main() -> iced::Result {
     application("Playground", App::update, App::view)
@@ -18,9 +18,7 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     Test,
-    Cell(String, usize, usize),
-    Header(String, usize),
-    Selection(Selection),
+    Action(Action),
     AddLimit,
     SubLimit,
     Light,
@@ -66,23 +64,28 @@ impl App {
             Message::Test => println!("Testing"),
             Message::Light => self.theme = Theme::Light,
             Message::Dark => self.theme = Theme::TokyoNightStorm,
-            Message::Cell(value, row, column) => {
-                if let Err(error) = self.sht.0.set_cell(value, column, row) {
-                    self.status.replace(error.to_string());
-                } else {
-                    self.status.take();
+            Message::Action(action) => match action {
+                Action::CellInput { value, column, row }
+                | Action::CellSubmit { value, column, row } => {
+                    if let Err(error) = self.sht.0.set_cell(value, column, row) {
+                        self.status.replace(error.to_string());
+                    } else {
+                        self.status.take();
+                    }
                 }
-            }
-            Message::Header(value, column) => {
-                if let Err(error) = self.sht.0.set_col_header(column, value) {
-                    self.status.replace(error.to_string());
-                } else {
-                    self.status.take();
+                Action::HeaderInput { value, column } | Action::HeaderSubmit { value, column } => {
+                    if let Err(error) = self.sht.0.set_col_header(column, value) {
+                        self.status.replace(error.to_string());
+                    } else {
+                        self.status.take();
+                    }
                 }
-            }
-            Message::Selection(_selection) => {
-                //dbg!(selection.list());
-            }
+                Action::Selection(selection) => {
+                    dbg!(selection);
+                }
+
+                action => println!("{action:#?} not set"),
+            },
             Message::AddLimit => self.limit += 1,
             Message::SubLimit => self.limit = (self.limit - 1).max(1),
         };
@@ -113,11 +116,7 @@ impl App {
                 ..Default::default()
             })
             .status_maybe(self.status.clone())
-            .on_selection(Message::Selection)
-            .on_header_input(Message::Header)
-            .on_header_submit(Message::Header)
-            .on_cell_submit(Message::Cell)
-            .on_cell_input(Message::Cell);
+            .on_action(Message::Action);
         //let content = Table::new(&self.sht);
         //let content = scrollable(row!(content)).direction(Direction::Horizontal(Scrollbar::new()));
         //let content = text_input("Nothing", "\"Wisconsin Dells\"").on_input(|_| Message::None);

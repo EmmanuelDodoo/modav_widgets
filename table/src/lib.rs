@@ -16,7 +16,7 @@ mod state;
 use state::*;
 
 mod utils;
-pub use utils::{KeyPress, RawTable, Selection};
+pub use utils::{Action, KeyPress, RawTable, Selection};
 
 pub mod style;
 use style::{Catalog, Style, StyleFn};
@@ -49,11 +49,7 @@ where
     cell_padding: Padding,
     status: Option<String>,
     class: Theme::Class<'a>,
-    on_cell_input: Option<Box<dyn Fn(String, usize, usize) -> Message + 'a>>,
-    on_cell_submit: Option<Box<dyn Fn(String, usize, usize) -> Message + 'a>>,
-    on_header_input: Option<Box<dyn Fn(String, usize) -> Message + 'a>>,
-    on_header_submit: Option<Box<dyn Fn(String, usize) -> Message + 'a>>,
-    on_selection: Option<Box<dyn Fn(Selection) -> Message + 'a>>,
+    on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     on_keypress: Option<Box<dyn Fn(KeyPress) -> Option<Message> + 'a>>,
 }
 
@@ -80,11 +76,7 @@ where
             header_font: None,
             numbering_font: None,
             spacing: 10.0,
-            on_cell_input: None,
-            on_cell_submit: None,
-            on_header_input: None,
-            on_header_submit: None,
-            on_selection: None,
+            on_action: None,
             on_keypress: None,
             status: None,
             class: Theme::default(),
@@ -152,39 +144,12 @@ where
         self
     }
 
-    /// Sets the message that should be produced when some text is typed a cell.
-    pub fn on_cell_input(
-        mut self,
-        callback: impl Fn(String, usize, usize) -> Message + 'a,
-    ) -> Self {
-        self.on_cell_input = Some(Box::new(callback));
-        self
-    }
-
-    /// Sets the message that should be produced when some text is typed a header.
-    pub fn on_header_input(mut self, callback: impl Fn(String, usize) -> Message + 'a) -> Self {
-        self.on_header_input = Some(Box::new(callback));
-        self
-    }
-
-    /// Sets the message that should be produced when the text in a cell is submitted
-    pub fn on_cell_submit(
-        mut self,
-        callback: impl Fn(String, usize, usize) -> Message + 'a,
-    ) -> Self {
-        self.on_cell_submit = Some(Box::new(callback));
-        self
-    }
-
-    /// Sets the message that should be produced when the text in a header is submitted
-    pub fn on_header_submit(mut self, callback: impl Fn(String, usize) -> Message + 'a) -> Self {
-        self.on_header_submit = Some(Box::new(callback));
-        self
-    }
-
-    /// Sets the message that should be produced when a cell selection is made.
-    pub fn on_selection(mut self, callback: impl Fn(Selection) -> Message + 'a) -> Self {
-        self.on_selection = Some(Box::new(callback));
+    /// Sets the message that should be produced when some action is performed in
+    /// the [`Table`].
+    ///
+    /// If this method is not called, the [`Table`] will be disabled.
+    pub fn on_action(mut self, on_action: impl Fn(Action) -> Message + 'a) -> Self {
+        self.on_action = Some(Box::new(on_action));
         self
     }
 
@@ -317,6 +282,10 @@ where
         shell: &mut advanced::Shell<'_, Message>,
         _viewport: &Rectangle,
     ) -> event::Status {
+        if self.on_action.is_none() {
+            return event::Status::Ignored;
+        }
+
         let state = state.state.downcast_mut::<State<Renderer>>();
         state.on_update(self, renderer, event, layout, cursor, shell)
     }

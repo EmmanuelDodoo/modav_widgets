@@ -14,7 +14,7 @@ use iced::{
 };
 
 use super::style::{Catalog, Style};
-use super::utils::{self, Editor, KeyPress, RawTable, Resizing, Selection};
+use super::utils::{self, Action, Editor, KeyPress, RawTable, Resizing, Selection};
 use super::{
     alignment_offset, draw, find_cursor_position, gen_pagination, measure_cursor_and_scroll_offset,
     word_boundary, Cell, Table, PAGINATION_ELLIPSIS,
@@ -1809,9 +1809,11 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             self.reset_editing();
             self.selection
                 .replace(Selection::row(row, table.cols.saturating_sub(1)));
-            if let Some(callback) = table.on_selection.as_ref() {
+
+            if let Some(on_action) = table.on_action.as_ref() {
                 // Guaranteed by the Selection::row above
-                let msg = callback(self.selection.clone().unwrap());
+                let action = Action::Selection(self.selection.clone().unwrap());
+                let msg = on_action(action);
                 shell.publish(msg);
             }
             return event::Status::Captured;
@@ -1921,8 +1923,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         if let Some(selection) = self.selection.as_mut() {
                             selection.block(row, column);
 
-                            if let Some(callback) = table.on_selection.as_ref() {
-                                let msg = callback(selection.clone());
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::Selection(selection.clone());
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
 
@@ -1935,8 +1938,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         if let Some(selection) = self.selection.as_mut() {
                             selection.scattered(row, column);
 
-                            if let Some(callback) = table.on_selection.as_ref() {
-                                let msg = callback(selection.clone());
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::Selection(selection.clone());
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
 
@@ -1983,9 +1987,10 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             (table.page_limit * (self.page + 1)).saturating_sub(1),
                         ));
 
-                        if let Some(callback) = table.on_selection.as_ref() {
+                        if let Some(on_action) = table.on_action.as_ref() {
                             // Guaranteed by the Selection::column above
-                            let msg = callback(self.selection.clone().unwrap());
+                            let action = Action::Selection(self.selection.clone().unwrap());
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
 
@@ -1998,9 +2003,11 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             _ => self.reset_editing(),
                         }
                         self.selection.replace(Selection::new(row, column));
-                        if let Some(callback) = table.on_selection.as_ref() {
+
+                        if let Some(on_action) = table.on_action.as_ref() {
                             // Guaranteed by the Selection::new above
-                            let msg = callback(self.selection.clone().unwrap());
+                            let action = Action::Selection(self.selection.clone().unwrap());
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
                         return event::Status::Captured;
@@ -2068,9 +2075,11 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         self.reset_editing();
                         self.selection
                             .replace(Selection::row(row, table.cols.saturating_sub(1)));
-                        if let Some(callback) = table.on_selection.as_ref() {
+
+                        if let Some(on_action) = table.on_action.as_ref() {
                             // Guaranteed by the Selection::row above
-                            let msg = callback(self.selection.clone().unwrap());
+                            let action = Action::Selection(self.selection.clone().unwrap());
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
                         return event::Status::Captured;
@@ -2337,7 +2346,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 self.min_widths[resize.column] = new.width;
                 self.min_heights[resize.row] = new.height;
 
+                if let Some(on_action) = table.on_action.as_ref() {
+                    let action = resize.action(new);
+                    let msg = on_action(action);
+
+                    shell.publish(msg);
+                }
+
                 self.scroll_cells(scroll_bounds, diff * (1.0 / Self::SCROLL_MULT));
+
                 shell.invalidate_layout();
                 event::Status::Captured
             }
@@ -2402,8 +2419,10 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                             focus.updated_at = Instant::now();
 
-                            if let Some(callback) = table.on_header_input.as_ref() {
-                                let msg = callback(value.clone(), column.saturating_sub(1));
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_input(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
 
@@ -2438,8 +2457,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                             focus.updated_at = Instant::now();
 
-                            if let Some(callback) = table.on_cell_input.as_ref() {
-                                let msg = callback(value.clone(), row, column);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::cell_input(value.clone(), column, row);
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
 
@@ -2463,12 +2483,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 match key.as_ref() {
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
                         if *is_header {
-                            if let Some(callback) = table.on_header_submit.as_ref() {
-                                let msg = callback(value.clone(), column - 1);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_submit(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg)
                             }
-                        } else if let Some(callback) = table.on_cell_submit.as_ref() {
-                            let msg = callback(value.clone(), row, column);
+                        } else if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::cell_submit(value.clone(), column, row);
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
 
@@ -2489,12 +2512,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         ));
 
                         if *is_header {
-                            if let Some(callback) = table.on_header_input.as_ref() {
-                                let msg = callback(value.clone(), column.saturating_sub(1));
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_input(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
-                        } else if let Some(callback) = table.on_cell_input.as_ref() {
-                            let msg = callback(value.clone(), row, column);
+                        } else if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::cell_input(value.clone(), column, row);
+                            let msg = on_action(action);
                             shell.publish(msg)
                         }
 
@@ -2513,12 +2539,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         ));
 
                         if *is_header {
-                            if let Some(callback) = table.on_header_input.as_ref() {
-                                let msg = callback(value.clone(), column.saturating_sub(1));
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_input(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
-                        } else if let Some(callback) = table.on_cell_input.as_ref() {
-                            let msg = callback(value.clone(), row, column);
+                        } else if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::cell_input(value.clone(), column, row);
+                            let msg = on_action(action);
                             shell.publish(msg)
                         }
 
@@ -2590,8 +2619,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     .expect("Widget Update: missing paginations: Back");
 
                 if cursor.is_over(back.bounds()) && self.page != 0 {
+                    let previous = self.page;
                     self.page -= 1;
                     self.goto_input.1 = (self.page + 1).to_string();
+
+                    if let Some(on_action) = table.on_action.as_ref() {
+                        let action = Action::page(previous, self.page);
+                        let msg = on_action(action);
+                        shell.publish(msg);
+                    }
+
                     shell.invalidate_layout();
                     return event::Status::Captured;
                 }
@@ -2616,7 +2653,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         .expect("Widget Update: pages cells and layout not equal length");
 
                     match value.parse::<usize>() {
-                        Ok(page) => self.page = page - 1,
+                        Ok(page) => {
+                            let previous = self.page;
+                            self.page = page - 1;
+
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::page(previous, self.page);
+                                let msg = on_action(action);
+                                shell.publish(msg);
+                            }
+                        }
                         Err(_) if value == PAGINATION_ELLIPSIS => {
                             let (_, left) = &self.paginations[idx - 1];
                             let (_, right) = &self.paginations[idx + 1];
@@ -2626,9 +2672,25 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                             let page = left + (right - left) / 2;
 
+                            let previous = self.page;
                             self.page = page;
+
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::page(previous, self.page);
+                                let msg = on_action(action);
+                                shell.publish(msg);
+                            }
                         }
-                        Err(_) if value.is_empty() => self.page = 0,
+                        Err(_) if value.is_empty() => {
+                            let previous = self.page;
+                            self.page = 0;
+
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::page(previous, self.page);
+                                let msg = on_action(action);
+                                shell.publish(msg);
+                            }
+                        }
                         Err(_) => {}
                     }
 
@@ -2642,8 +2704,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     .expect("Widget Update: missing paginations: Next");
 
                 if cursor.is_over(next.bounds()) && self.page < table.pages_end() {
+                    let previous = self.page;
                     self.page += 1;
                     self.goto_input.1 = (self.page + 1).to_string();
+
+                    if let Some(on_action) = table.on_action.as_ref() {
+                        let action = Action::page(previous, self.page);
+                        let msg = on_action(action);
+                        shell.publish(msg);
+                    }
+
                     shell.invalidate_layout();
                     return event::Status::Captured;
                 }
@@ -2746,7 +2816,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             let (_, page) = &self.goto_input;
                             match page.parse::<usize>() {
                                 Ok(page) => {
+                                    let previous = self.page;
                                     self.page = usize::clamp(page - 1, 0, table.pages_end());
+                                    if previous != self.page {
+                                        if let Some(on_action) = table.on_action.as_ref() {
+                                            let action = Action::page(previous, self.page);
+                                            let msg = on_action(action);
+                                            shell.publish(msg);
+                                        }
+                                    }
                                     shell.invalidate_layout();
                                     return event::Status::Captured;
                                 }
@@ -2840,7 +2918,19 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
                         if let Ok(page) = value.parse::<usize>() {
                             let page = if page == 0 { 0 } else { page - 1 };
+
+                            let previous = self.page;
+
                             self.page = usize::clamp(page, 0, table.pages_end());
+
+                            if previous != self.page {
+                                if let Some(on_action) = table.on_action.as_ref() {
+                                    let action = Action::page(previous, self.page);
+                                    let msg = on_action(action);
+                                    shell.publish(msg);
+                                }
+                            }
+
                             self.reset();
                             shell.invalidate_layout();
                             return event::Status::Captured;
@@ -3013,16 +3103,18 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         ..
                     }) => {
                         if is_header {
-                            if let Some(callback) = table.on_header_submit.as_ref() {
-                                let msg = callback(value, index);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::header_submit(value, index);
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
                         } else {
                             let (row, column) =
                                 (index % table.page_limit, index / table.page_limit);
 
-                            if let Some(callback) = table.on_cell_submit.as_ref() {
-                                let msg = callback(value, row, column);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::cell_submit(value, column, row);
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
                         }
@@ -3222,8 +3314,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     _ => return event::Status::Ignored,
                 }
 
-                if let Some(callback) = table.on_selection.as_ref() {
-                    let msg = callback(selection.clone());
+                if let Some(on_action) = table.on_action.as_ref() {
+                    let action = Action::Selection(selection.clone());
+                    let msg = on_action(action);
                     shell.publish(msg);
                 }
                 return event::Status::Captured;
