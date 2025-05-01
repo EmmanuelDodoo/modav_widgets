@@ -1190,6 +1190,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 );
 
                 let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                let row = row + (self.page * table.page_limit);
 
                 let (selection, is_selected) = self
                     .selection
@@ -1872,8 +1873,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     (0, idx)
                 } else {
                     let idx = idx - table.cols;
-                    let column = idx / table.page_limit;
-                    let row = idx % table.page_limit;
+                    let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                    let row = row + (self.page * table.page_limit);
                     (row, column)
                 };
 
@@ -3254,6 +3255,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 text,
                 ..
             }) if self.editing.is_none() && cursor.is_over(layout.bounds()) => {
+                // todo!() Change cursor bounds check to widget focus check
                 if let Some(callback) = table.on_keypress.as_ref() {
                     let msg = callback(KeyPress {
                         key: key.clone(),
@@ -3277,12 +3279,17 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     {
                         selection.grow(
                             0,
-                            table.page_limit.saturating_sub(1),
+                            table.rows.saturating_sub(1),
                             1,
                             table.cols.saturating_sub(1),
                         );
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
+                        selection.move_right(table.cols.saturating_sub(1))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Enter)
+                        if self.keyboard_modifiers.shift() =>
+                    {
                         selection.move_right(table.cols.saturating_sub(1))
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft)
@@ -3296,14 +3303,14 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     {
                         selection.grow(
                             1,
-                            table.page_limit.saturating_sub(1),
+                            table.rows.saturating_sub(1),
                             0,
                             table.cols.saturating_sub(1),
                         );
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown)
                     | keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                        selection.move_down(table.page_limit.saturating_sub(1))
+                        selection.move_down(table.rows.saturating_sub(1))
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp)
                         if self.keyboard_modifiers.shift() =>
