@@ -16,7 +16,7 @@ mod state;
 use state::*;
 
 mod utils;
-pub use utils::{Action, KeyPress, RawTable, Selection};
+pub use utils::{Action, KeyPress, Motion, RawTable, Selection};
 
 pub mod style;
 use style::{Catalog, Style, StyleFn};
@@ -288,6 +288,18 @@ where
 
         let state = state.state.downcast_mut::<State<Renderer>>();
         state.on_update(self, renderer, event, layout, cursor, shell)
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        state: &'b mut Tree,
+        layout: layout::Layout<'_>,
+        renderer: &Renderer,
+        translation: iced::Vector,
+    ) -> Option<advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        let state = state.state.downcast_mut::<State<Renderer>>();
+
+        state.overlay(self, layout, renderer, translation)
     }
 }
 

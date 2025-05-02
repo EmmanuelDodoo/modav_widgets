@@ -7,7 +7,7 @@ use iced::{
 
 use modav_core::repr::col_sheet::{CellRef, ColumnSheet, DataType};
 
-use table::{Action, RawTable, Table};
+use table::{Action, Motion, RawTable, Table};
 
 fn main() -> iced::Result {
     application("Playground", App::update, App::view)
@@ -80,11 +80,25 @@ impl App {
                         self.status.take();
                     }
                 }
-                Action::Selection(selection) => {
-                    dbg!(selection);
+                Action::Selection(_selection) => {
+                    //dbg!(selection);
                 }
-
-                action => println!("{action:#?} not set"),
+                Action::MoveSelection(motion) => {
+                    dbg!(motion);
+                    match motion {
+                        Motion::Cell { .. } => {
+                            println!("No swap cell yet")
+                        }
+                        Motion::Row { src, dst } => {
+                            self.sht.0.swap_rows(src, dst).unwrap();
+                        }
+                        Motion::Column { src, dst } => {
+                            self.sht.0.swap_cols(src, dst).unwrap();
+                        }
+                    }
+                }
+                //action => println!("{action:#?} not set"),
+                _ => {}
             },
             Message::AddLimit => self.limit += 1,
             Message::SubLimit => self.limit = (self.limit - 1).max(1),
