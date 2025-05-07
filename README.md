@@ -11,7 +11,7 @@ for the [modav project](https://github.com/EmmanuelDodoo/modav).
 
 A vertical collapsible tree wigdet with tabing functionality.
 
-![Tree widget example](assets/table.gif)
+![Tree widget example](assets/tree.gif)
 
 You can run it with `cargo run`;
 
