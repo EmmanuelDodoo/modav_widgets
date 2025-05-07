@@ -10,20 +10,23 @@ edition = "2021"
 license = "MIT"
 
 [workspace]
-members = ["table", "highlighter"]
+members = ["table", "highlighter", "tree"]
 
 [workspace.dependencies]
 table = { version = "0.1.0", path = "table" }
 highlighter = { version = "0.1.0", path = "highlighter" }
+tree = { version = "0.1.0", path = "tree" }
 iced = { version = "0.13.1", features = [] }
 
 [dependencies]
 iced.workspace = true
 table.workspace = true
 highlighter.workspace = true
+tree.workspace = true
 
 [dev-dependencies]
 modav_core = { git = "ssh://github.com/EmmanuelDodoo/modav_core.git" }
+lilt = "0.8"
 
 
 [[example]]
@@ -34,3 +37,7 @@ path = "examples/table/main.rs"
 [[example]]
 name = "highlighter"
 path = "examples/highlighter/highlighter.rs"
+
+[[example]]
+name = "tree"
+path = "examples/tree/tree.rs"
