@@ -1,3 +1,19 @@
+//! A table widget
+//!
+//! - Supports inputs for both cells and headers
+//! - Supports cell(s)/ column/row selection
+//! - Supports column/row resizing
+//! - Supports pagination with dynamic page limits
+//! - Supports cell(s)/row/column moving
+//!
+//! Functionality:
+//!
+//! - Shift + Arrow direction: Expands/shrinks current selection
+//! - Shift + Click: Starts a contiguous selection
+//! - Ctrl + Click: Starts a non-contiguous selection
+//! - ArrowDown or Enter: Moves selection down
+//! - ArrowRight or Shift+Enter: Moves selection to the right.
+
 use iced::{
     advanced::{
         self,
