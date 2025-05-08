@@ -5,7 +5,15 @@ for the [modav project](https://github.com/EmmanuelDodoo/modav).
 
 ### Table
 
+A table widget
+
 ![Table Widget example](assets/table.gif)
+
+You can run it with `cargo run`;
+
+```
+cargo run --example table
+``` 
 
 ### Tree
 

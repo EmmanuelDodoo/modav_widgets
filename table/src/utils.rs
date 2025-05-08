@@ -1,4 +1,4 @@
-use iced::{alignment::Horizontal, keyboard, mouse, Point, Rectangle, Size, Vector};
+use iced::{alignment::Horizontal, keyboard, mouse, time::Instant, Point, Rectangle, Size, Vector};
 use std::collections::HashSet;
 
 #[allow(unused_imports)]
@@ -220,6 +220,23 @@ impl<'a> Editor<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub enum Editing {
+    Goto(Rectangle),
+    Cell {
+        index: usize,
+        value: String,
+        is_header: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Focus {
+    pub updated_at: Instant,
+    pub now: Instant,
+    pub is_window_focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 /// A group of selected cells.
 pub enum Selection {
     /// A continuous selection.
@@ -242,10 +259,10 @@ impl Selection {
         }
     }
 
-    pub(super) fn row(row: usize, column_len: usize) -> Self {
+    pub(super) fn row(row: usize, column_end: usize) -> Self {
         Self::Block {
             rows: row..=row,
-            columns: 0..=column_len,
+            columns: 0..=column_end,
         }
     }
 
@@ -313,7 +330,9 @@ impl Selection {
         }
     }
 
-    pub(super) fn contains(&self, row: usize, column: usize) -> bool {
+    /// Returns`true` if the [`Selection`] contains the given `row` and
+    /// `column`.
+    pub fn contains(&self, row: usize, column: usize) -> bool {
         match self {
             Self::Block { rows, columns } => rows.contains(&row) && columns.contains(&column),
             Self::Scattered { cells, .. } => cells.contains(&(row, column)),
@@ -476,6 +495,63 @@ impl Selection {
         }
     }
 
+    pub(super) fn motion(&self) -> Option<Motion> {
+        match self {
+            Self::Block { rows, columns } => {
+                let start_rw = *rows.start();
+                let start_col = *columns.start();
+
+                let is_row = start_rw == *rows.end();
+                let is_col = start_col == *columns.end();
+
+                let source = if is_row && is_col {
+                    Motion::Cell {
+                        s_row: start_rw,
+                        s_column: start_col,
+                        d_row: start_rw,
+                        d_column: start_col,
+                    }
+                } else if is_row {
+                    Motion::Row {
+                        src: start_rw,
+                        dst: start_rw,
+                    }
+                } else if is_col {
+                    Motion::Column {
+                        src: start_col,
+                        dst: start_col,
+                    }
+                } else {
+                    return None;
+                };
+
+                Some(source)
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn update(&mut self, motion: Motion) {
+        if self.motion().is_none() {
+            return;
+        }
+
+        if let Selection::Block { rows, columns } = self {
+            match motion {
+                Motion::Cell {
+                    d_row, d_column, ..
+                } => {
+                    *rows = d_row..=d_row;
+                    *columns = d_column..=d_column;
+                }
+                Motion::Row { dst, .. } => {
+                    *rows = dst..=dst;
+                }
+                Motion::Column { dst, .. } => *columns = dst..=dst,
+            }
+        }
+    }
+
     /// Returns the `(row, column)` indices for each unique cell in the [`Selection`].
     pub fn list(&self) -> HashSet<(usize, usize)> {
         match self {
@@ -497,16 +573,70 @@ impl Selection {
     }
 }
 
+/// A [`Selection`] movement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Motion {
+    /// A single cell [`Motion`].
+    Cell {
+        /// The source cell's row.
+        s_row: usize,
+        /// The source cell's column.
+        s_column: usize,
+        /// The distination cell's row.
+        d_row: usize,
+        /// The distination cell's column.
+        d_column: usize,
+    },
+    /// A motion on an enitre row.
+    Row {
+        /// The source row.
+        src: usize,
+        /// The distination row.
+        dst: usize,
+    },
+    /// A motion on an entire column.
+    Column {
+        /// The source column.
+        src: usize,
+        /// The destination column.
+        dst: usize,
+    },
+}
+
+impl Motion {
+    pub fn is_row(&self) -> bool {
+        matches!(self, Self::Row { .. } | Self::Cell { .. })
+    }
+
+    /// Returns`true` if the [`MoveSource`] contains the given `row` and
+    /// `column`.
+    pub fn contains(&self, row: usize, column: usize) -> bool {
+        match self {
+            Self::Cell {
+                s_row: own_rw,
+                s_column: own_col,
+                ..
+            } => *own_rw == row && *own_col == column,
+            Self::Row { src, .. } => *src == row,
+            Self::Column { src, .. } => *src == column,
+        }
+    }
+}
+
+/// The direction in which a resize occurs
 #[derive(Debug, Clone, Copy)]
-enum Drag {
+pub enum ResizeDirection {
+    /// A row resize affecting only the row height
     Vertical,
+    /// A column resize affecting only the column width
     Horizontal,
+    /// Both vertical and horizontal resizing
     Diagonal,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Resizing {
-    kind: Drag,
+    kind: ResizeDirection,
     cursor: Point,
     pub(super) row: usize,
     pub(super) column: usize,
@@ -539,11 +669,11 @@ impl Resizing {
         };
 
         let kind = if horizontal && vertical {
-            Drag::Diagonal
+            ResizeDirection::Diagonal
         } else if horizontal {
-            Drag::Horizontal
+            ResizeDirection::Horizontal
         } else if vertical {
-            Drag::Vertical
+            ResizeDirection::Vertical
         } else {
             return None;
         };
@@ -564,19 +694,19 @@ impl Resizing {
         self.cursor = position;
 
         match self.kind {
-            Drag::Vertical => {
+            ResizeDirection::Vertical => {
                 let size = Size::new(width, height + diff.y);
                 let diff = Vector::new(0.0, diff.y);
 
                 (size, diff)
             }
-            Drag::Horizontal => {
+            ResizeDirection::Horizontal => {
                 let size = Size::new(width + diff.x, height);
                 let diff = Vector::new(-diff.x, 0.0);
 
                 (size, diff)
             }
-            Drag::Diagonal => (
+            ResizeDirection::Diagonal => (
                 Size::new(width + diff.x, height + diff.y),
                 Vector::new(-diff.x, diff.y),
             ),
@@ -585,9 +715,18 @@ impl Resizing {
 
     pub(super) fn interaction(self) -> mouse::Interaction {
         match self.kind {
-            Drag::Vertical => mouse::Interaction::ResizingVertically,
-            Drag::Horizontal => mouse::Interaction::ResizingHorizontally,
-            Drag::Diagonal => mouse::Interaction::ResizingDiagonallyDown,
+            ResizeDirection::Vertical => mouse::Interaction::ResizingVertically,
+            ResizeDirection::Horizontal => mouse::Interaction::ResizingHorizontally,
+            ResizeDirection::Diagonal => mouse::Interaction::ResizingDiagonallyDown,
+        }
+    }
+
+    pub(super) fn action(&self, size: Size) -> Action {
+        Action::Resize {
+            direction: self.kind,
+            column: self.column.saturating_sub(1),
+            row: self.row.saturating_sub(1),
+            size,
         }
     }
 }
@@ -601,6 +740,65 @@ pub struct KeyPress {
     pub modifiers: keyboard::Modifiers,
     /// The text produced by the key press.
     pub text: Option<String>,
+}
+
+/// An interaction with a [`Table`].
+#[derive(Debug, Clone)]
+pub enum Action {
+    /// A character insertion in a header
+    HeaderInput { value: String, column: usize },
+    /// A character insertion in a cell
+    CellInput {
+        value: String,
+        column: usize,
+        row: usize,
+    },
+    /// A header submission
+    HeaderSubmit { value: String, column: usize },
+    /// A cell submission
+    CellSubmit {
+        value: String,
+        column: usize,
+        row: usize,
+    },
+    /// A cell selection
+    Selection(Selection),
+    /// A page change
+    PageChange { previous: usize, current: usize },
+    /// A column and/or row resizing
+    Resize {
+        direction: ResizeDirection,
+        size: Size,
+        column: usize,
+        row: usize,
+    },
+    /// A [`Selection`] movement.
+    MoveSelection(Motion),
+}
+
+impl Action {
+    pub(super) fn cell_input(value: String, column: usize, row: usize) -> Self {
+        Self::CellInput { value, column, row }
+    }
+
+    pub(super) fn cell_submit(value: String, column: usize, row: usize) -> Self {
+        Self::CellSubmit { value, column, row }
+    }
+
+    pub(super) fn header_input(value: String, column: usize) -> Self {
+        Self::HeaderInput { value, column }
+    }
+
+    pub(super) fn header_submit(value: String, column: usize) -> Self {
+        Self::HeaderSubmit { value, column }
+    }
+
+    pub(super) fn page(previous: usize, current: usize) -> Self {
+        Self::PageChange {
+            previous: previous + 1,
+            current: current + 1,
+        }
+    }
 }
 
 /// The underlying data type for a [`Table`] widget.

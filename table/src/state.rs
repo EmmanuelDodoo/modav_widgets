@@ -14,17 +14,24 @@ use iced::{
 };
 
 use super::style::{Catalog, Style};
-use super::utils::{self, Editor, KeyPress, RawTable, Resizing, Selection};
+use super::utils::{
+    self, Action, Editing, Editor, Focus, KeyPress, Motion, RawTable, Resizing, Selection,
+};
 use super::{
     alignment_offset, draw, find_cursor_position, gen_pagination, measure_cursor_and_scroll_offset,
     word_boundary, Cell, Table, PAGINATION_ELLIPSIS,
 };
+
+mod overlay;
+pub use overlay::Overlay;
 
 const BACK: &str = "‹ Back";
 const NEXT: &str = "Next ›";
 const GOTO_PAGE: &str = "Page:";
 const GOTO_GO: &str = "Go";
 const CURSOR_BLINK_INTERVAL_MILLIS: u128 = 500;
+/// Spacing between cells
+const CELL_GAP: f32 = 3.5;
 
 pub struct State<Renderer: text::Renderer> {
     cells: Vec<Cell<Renderer>>,
@@ -54,6 +61,8 @@ pub struct State<Renderer: text::Renderer> {
     resizing: Option<Resizing>,
     selection: Option<Selection>,
     page_limit: usize,
+    cursor_position: Option<Point>,
+    motion: Option<Motion>,
 }
 
 impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
@@ -63,8 +72,6 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
     const MAX_CELL: Size = Size::new(f32::INFINITY, 45.0);
     /// Multiplier for each scroll step
     const SCROLL_MULT: f32 = 5.0;
-    /// Spacing between cells
-    const CELL_GAP: f32 = 3.5;
     /// Multiplier for column kind text size.
     const KIND_MULT: f32 = 0.9;
 
@@ -97,6 +104,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             resizing: None,
             selection: None,
             page_limit: 0,
+            cursor_position: None,
+            motion: None,
         }
     }
 
@@ -203,6 +212,38 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         self.pages_gap = 5.0;
     }
 
+    fn swap_dimensions(&mut self, motion: Motion, page_limit: usize) {
+        match motion {
+            Motion::Cell {
+                s_row,
+                s_column,
+                d_row,
+                d_column,
+            } => {
+                let s_column = s_column + 1;
+                let s_row = s_row.saturating_sub(self.page * page_limit) + 1;
+
+                let d_column = d_column + 1;
+                let d_row = d_row.saturating_sub(self.page * page_limit) + 1;
+
+                self.min_heights.swap(s_row, d_row);
+                self.min_widths.swap(s_column, d_column);
+            }
+            Motion::Row { src, dst } => {
+                let src = src.saturating_sub(self.page * page_limit) + 1;
+                let dst = dst.saturating_sub(self.page * page_limit) + 1;
+
+                self.min_heights.swap(src, dst);
+            }
+            Motion::Column { src, dst } => {
+                let src = src + 1;
+                let dst = dst + 1;
+
+                self.min_widths.swap(src, dst);
+            }
+        };
+    }
+
     pub fn is_focused(&self) -> bool {
         self.is_focused.is_some()
     }
@@ -216,6 +257,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         self.reset_resizing();
         self.reset_editing();
         self.reset_selection();
+        self.motion = None;
         self.last_click = None;
         self.is_focused = None;
         self.keyboard_modifiers = keyboard::Modifiers::default()
@@ -259,7 +301,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         let padding = table.cell_padding;
         let size = table.text_size.unwrap_or_else(|| renderer.default_size());
 
-        let gap = Self::CELL_GAP;
+        let gap = CELL_GAP;
         // Adds numbering column
         let dimensions = (table.rows, table.cols + 1);
         // Adds headers row
@@ -1105,7 +1147,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             top_left = top_left.map(|size| Size::new(size.width, pair.bounds().height));
 
             if is_selected {
-                let bounds = pair.bounds().expand([Self::CELL_GAP, Self::CELL_GAP]);
+                let bounds = pair.bounds().expand([CELL_GAP, CELL_GAP]);
                 if let Some(clipped_viewport) = bounds.intersection(&viewport) {
                     <Renderer as advanced::Renderer>::fill_quad(
                         renderer,
@@ -1190,6 +1232,13 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 );
 
                 let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                let row = row + (self.page * table.page_limit);
+
+                let is_in_motion = self
+                    .motion
+                    .as_ref()
+                    .map(|motion| motion.contains(row, column))
+                    .unwrap_or_default();
 
                 let (selection, is_selected) = self
                     .selection
@@ -1206,19 +1255,19 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     let mut padding = Padding::ZERO;
 
                     if (selection & 1) == 1 {
-                        padding = padding.left(Self::CELL_GAP);
+                        padding = padding.left(CELL_GAP);
                     }
 
                     if ((selection >> 1) & 1) == 1 {
-                        padding = padding.top(Self::CELL_GAP);
+                        padding = padding.top(CELL_GAP);
                     }
 
                     if ((selection >> 2) & 1) == 1 {
-                        padding = padding.right(Self::CELL_GAP);
+                        padding = padding.right(CELL_GAP);
                     }
 
                     if ((selection >> 3) & 1) == 1 {
-                        padding = padding.bottom(Self::CELL_GAP);
+                        padding = padding.bottom(CELL_GAP);
                     }
 
                     padding
@@ -1273,14 +1322,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         );
                     }
 
-                    draw(
-                        renderer,
-                        text_color,
-                        child,
-                        cell.raw(),
-                        padding,
-                        &clipped_viewport,
-                    )
+                    if !is_in_motion {
+                        draw(
+                            renderer,
+                            text_color,
+                            child,
+                            cell.raw(),
+                            padding,
+                            &clipped_viewport,
+                        )
+                    }
                 }
             }
 
@@ -1358,6 +1409,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         };
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_edit(
         &self,
         renderer: &mut Renderer,
@@ -1496,7 +1548,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         let goto = children.next().expect("Widget draw: Missing goto layout");
 
         let cells_bounds = {
-            let width = bounds.width - padding.horizontal() + Self::CELL_GAP;
+            let width = bounds.width - padding.horizontal() + CELL_GAP;
             let diff = padding.vertical()
                 + pagination.bounds().height.max(goto.bounds().height)
                 + if table.multiple_pages() { spacing } else { 0.0 }
@@ -1750,6 +1802,10 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             return interaction;
         }
 
+        if self.motion.is_some() {
+            return mouse::Interaction::Grabbing;
+        }
+
         let mut children = layout.children();
 
         let cells = children
@@ -1800,6 +1856,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             .find(|(_, child)| cursor.is_over(child.bounds()))
         {
             let row = idx - 1;
+            let row = row + (self.page * table.page_limit);
             let bounds = numbering.bounds();
             // Guaranteed by the find above
             let cursor_position = cursor.position_over(bounds).unwrap();
@@ -1809,10 +1866,18 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             self.reset_editing();
             self.selection
                 .replace(Selection::row(row, table.cols.saturating_sub(1)));
-            if let Some(callback) = table.on_selection.as_ref() {
+
+            if let Some(on_action) = table.on_action.as_ref() {
                 // Guaranteed by the Selection::row above
-                let msg = callback(self.selection.clone().unwrap());
+                let action = Action::Selection(self.selection.clone().unwrap());
+                let msg = on_action(action);
                 shell.publish(msg);
+            }
+            if self.editing.is_none() {
+                self.motion = self
+                    .selection
+                    .as_ref()
+                    .and_then(|selection| selection.motion());
             }
             return event::Status::Captured;
         }
@@ -1870,8 +1935,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     (0, idx)
                 } else {
                     let idx = idx - table.cols;
-                    let column = idx / table.page_limit;
-                    let row = idx % table.page_limit;
+                    let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                    let row = row + (self.page * table.page_limit);
                     (row, column)
                 };
 
@@ -1918,31 +1983,34 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 match click.kind() {
                     click::Kind::Single if self.keyboard_modifiers.shift() && !is_header => {
                         self.last_click = Some(click);
-                        if let Some(selection) = self.selection.as_mut() {
-                            selection.block(row, column);
+                        let Some(selection) = self.selection.as_mut() else {
+                            return event::Status::Ignored;
+                        };
 
-                            if let Some(callback) = table.on_selection.as_ref() {
-                                let msg = callback(selection.clone());
-                                shell.publish(msg);
-                            }
+                        selection.block(row, column);
 
-                            self.reset_editing();
-                            return event::Status::Captured;
+                        if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::Selection(selection.clone());
+                            let msg = on_action(action);
+                            shell.publish(msg);
                         }
+
+                        self.reset_editing();
                     }
                     click::Kind::Single if self.keyboard_modifiers.command() && !is_header => {
                         self.last_click = Some(click);
-                        if let Some(selection) = self.selection.as_mut() {
-                            selection.scattered(row, column);
+                        let Some(selection) = self.selection.as_mut() else {
+                            return event::Status::Ignored;
+                        };
+                        selection.scattered(row, column);
 
-                            if let Some(callback) = table.on_selection.as_ref() {
-                                let msg = callback(selection.clone());
-                                shell.publish(msg);
-                            }
-
-                            self.reset_editing();
-                            return event::Status::Captured;
+                        if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::Selection(selection.clone());
+                            let msg = on_action(action);
+                            shell.publish(msg);
                         }
+
+                        self.reset_editing();
                     }
                     click::Kind::Single
                         if editing_idx.is_some()
@@ -1972,8 +2040,6 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             value,
                             is_header,
                         });
-
-                        return event::Status::Captured;
                     }
                     click::Kind::Single if is_header => {
                         self.last_click = Some(click);
@@ -1983,13 +2049,12 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             (table.page_limit * (self.page + 1)).saturating_sub(1),
                         ));
 
-                        if let Some(callback) = table.on_selection.as_ref() {
+                        if let Some(on_action) = table.on_action.as_ref() {
                             // Guaranteed by the Selection::column above
-                            let msg = callback(self.selection.clone().unwrap());
+                            let action = Action::Selection(self.selection.clone().unwrap());
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
-
-                        return event::Status::Captured;
                     }
                     click::Kind::Single => {
                         self.last_click = Some(click);
@@ -1998,12 +2063,13 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             _ => self.reset_editing(),
                         }
                         self.selection.replace(Selection::new(row, column));
-                        if let Some(callback) = table.on_selection.as_ref() {
+
+                        if let Some(on_action) = table.on_action.as_ref() {
                             // Guaranteed by the Selection::new above
-                            let msg = callback(self.selection.clone().unwrap());
+                            let action = Action::Selection(self.selection.clone().unwrap());
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
-                        return event::Status::Captured;
                     }
                     click::Kind::Double if self.editing.is_some() => {
                         let position =
@@ -2019,7 +2085,6 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             value,
                             is_header,
                         });
-                        return event::Status::Captured;
                     }
                     click::Kind::Double => {
                         // Needs to be in sync with kind::Single
@@ -2046,8 +2111,6 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             value,
                             is_header,
                         });
-
-                        return event::Status::Captured;
                     }
                     click::Kind::Triple if self.editing.is_some() => {
                         self.cursor.select_all(&value);
@@ -2059,25 +2122,32 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             value,
                             is_header,
                         });
-
-                        return event::Status::Captured;
                     }
                     // todo!: Cannot realistically trigger this condition atm
                     click::Kind::Triple => {
                         self.last_click = Some(click);
                         self.reset_editing();
+                        let row = row + (self.page * table.page_limit);
                         self.selection
                             .replace(Selection::row(row, table.cols.saturating_sub(1)));
-                        if let Some(callback) = table.on_selection.as_ref() {
+
+                        if let Some(on_action) = table.on_action.as_ref() {
                             // Guaranteed by the Selection::row above
-                            let msg = callback(self.selection.clone().unwrap());
+                            let action = Action::Selection(self.selection.clone().unwrap());
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
-                        return event::Status::Captured;
                     }
                 }
 
-                event::Status::Ignored
+                if self.editing.is_none() {
+                    self.motion = self
+                        .selection
+                        .as_ref()
+                        .and_then(|selection| selection.motion());
+                }
+
+                event::Status::Captured
             }
             None => {
                 self.reset();
@@ -2087,6 +2157,7 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_cells<Raw: RawTable, Message, Theme: Catalog>(
         &mut self,
         table: &Table<'_, Raw, Message, Theme, Renderer>,
@@ -2325,6 +2396,105 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             }
             Event::Mouse(mouse::Event::CursorMoved { position })
             | Event::Touch(touch::Event::FingerMoved { position, .. })
+                if self.motion.is_some() =>
+            {
+                let Some(motion) = self.motion.as_mut() else {
+                    return event::Status::Ignored;
+                };
+
+                let mut children = layout.children();
+                let numbering = children
+                    .next()
+                    .expect("Widget Update: Missing numbering cells")
+                    .children()
+                    .enumerate()
+                    .find_map(|(index, child)| {
+                        if child.bounds().contains(position) {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    });
+                let headers = children
+                    .next()
+                    .expect("Widget Update: Missing header cells")
+                    .children()
+                    .enumerate()
+                    .find_map(|(index, child)| {
+                        if child.bounds().contains(position) {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    });
+
+                let cells = children
+                    .next()
+                    .expect("Widget Update: Missing Cells layout")
+                    .children()
+                    .enumerate()
+                    .find_map(|(index, child)| {
+                        if child.bounds().contains(position) {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    });
+
+                match motion {
+                    Motion::Cell {
+                        d_column, d_row, ..
+                    } => {
+                        if let Some(numbering) = numbering {
+                            *d_row = numbering.wrapping_sub(1);
+                            return event::Status::Captured;
+                        }
+
+                        if let Some(header) = headers {
+                            *d_column = header;
+                            return event::Status::Captured;
+                        }
+
+                        if let Some(index) = cells {
+                            let (row, column) =
+                                (index % table.page_limit, index / table.page_limit);
+                            let row = row + (self.page * table.page_limit);
+                            *d_row = row;
+                            *d_column = column;
+                            return event::Status::Captured;
+                        }
+                    }
+                    Motion::Column { dst, .. } => {
+                        if let Some(index) = headers {
+                            *dst = index;
+                            return event::Status::Captured;
+                        }
+
+                        if let Some(cell) = cells {
+                            let column = cell / table.page_limit;
+                            *dst = column;
+                            return event::Status::Captured;
+                        }
+                    }
+                    Motion::Row { dst, .. } => {
+                        if let Some(index) = numbering {
+                            *dst = index.saturating_sub(1) + (self.page * table.page_limit);
+                            return event::Status::Captured;
+                        }
+
+                        if let Some(cell) = cells {
+                            let row = cell % table.page_limit;
+                            let row = row + (self.page * table.page_limit);
+                            *dst = row;
+                            return event::Status::Captured;
+                        }
+                    }
+                }
+
+                event::Status::Ignored
+            }
+            Event::Mouse(mouse::Event::CursorMoved { position })
+            | Event::Touch(touch::Event::FingerMoved { position, .. })
                 if self.resizing.is_some() =>
             {
                 let Some(resize) = self.resizing.as_mut() else {
@@ -2337,7 +2507,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 self.min_widths[resize.column] = new.width;
                 self.min_heights[resize.row] = new.height;
 
+                if let Some(on_action) = table.on_action.as_ref() {
+                    let action = resize.action(new);
+                    let msg = on_action(action);
+
+                    shell.publish(msg);
+                }
+
                 self.scroll_cells(scroll_bounds, diff * (1.0 / Self::SCROLL_MULT));
+
                 shell.invalidate_layout();
                 event::Status::Captured
             }
@@ -2402,8 +2580,10 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                             focus.updated_at = Instant::now();
 
-                            if let Some(callback) = table.on_header_input.as_ref() {
-                                let msg = callback(value.clone(), column.saturating_sub(1));
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_input(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
 
@@ -2438,8 +2618,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                             focus.updated_at = Instant::now();
 
-                            if let Some(callback) = table.on_cell_input.as_ref() {
-                                let msg = callback(value.clone(), row, column);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::cell_input(value.clone(), column, row);
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
 
@@ -2463,12 +2644,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 match key.as_ref() {
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
                         if *is_header {
-                            if let Some(callback) = table.on_header_submit.as_ref() {
-                                let msg = callback(value.clone(), column - 1);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_submit(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg)
                             }
-                        } else if let Some(callback) = table.on_cell_submit.as_ref() {
-                            let msg = callback(value.clone(), row, column);
+                        } else if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::cell_submit(value.clone(), column, row);
+                            let msg = on_action(action);
                             shell.publish(msg);
                         }
 
@@ -2489,12 +2673,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         ));
 
                         if *is_header {
-                            if let Some(callback) = table.on_header_input.as_ref() {
-                                let msg = callback(value.clone(), column.saturating_sub(1));
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_input(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
-                        } else if let Some(callback) = table.on_cell_input.as_ref() {
-                            let msg = callback(value.clone(), row, column);
+                        } else if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::cell_input(value.clone(), column, row);
+                            let msg = on_action(action);
                             shell.publish(msg)
                         }
 
@@ -2513,12 +2700,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         ));
 
                         if *is_header {
-                            if let Some(callback) = table.on_header_input.as_ref() {
-                                let msg = callback(value.clone(), column.saturating_sub(1));
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action =
+                                    Action::header_input(value.clone(), column.saturating_sub(1));
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
-                        } else if let Some(callback) = table.on_cell_input.as_ref() {
-                            let msg = callback(value.clone(), row, column);
+                        } else if let Some(on_action) = table.on_action.as_ref() {
+                            let action = Action::cell_input(value.clone(), column, row);
+                            let msg = on_action(action);
                             shell.publish(msg)
                         }
 
@@ -2590,8 +2780,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     .expect("Widget Update: missing paginations: Back");
 
                 if cursor.is_over(back.bounds()) && self.page != 0 {
+                    let previous = self.page;
                     self.page -= 1;
                     self.goto_input.1 = (self.page + 1).to_string();
+
+                    if let Some(on_action) = table.on_action.as_ref() {
+                        let action = Action::page(previous, self.page);
+                        let msg = on_action(action);
+                        shell.publish(msg);
+                    }
+
                     shell.invalidate_layout();
                     return event::Status::Captured;
                 }
@@ -2616,7 +2814,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         .expect("Widget Update: pages cells and layout not equal length");
 
                     match value.parse::<usize>() {
-                        Ok(page) => self.page = page - 1,
+                        Ok(page) => {
+                            let previous = self.page;
+                            self.page = page - 1;
+
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::page(previous, self.page);
+                                let msg = on_action(action);
+                                shell.publish(msg);
+                            }
+                        }
                         Err(_) if value == PAGINATION_ELLIPSIS => {
                             let (_, left) = &self.paginations[idx - 1];
                             let (_, right) = &self.paginations[idx + 1];
@@ -2626,9 +2833,25 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
                             let page = left + (right - left) / 2;
 
+                            let previous = self.page;
                             self.page = page;
+
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::page(previous, self.page);
+                                let msg = on_action(action);
+                                shell.publish(msg);
+                            }
                         }
-                        Err(_) if value.is_empty() => self.page = 0,
+                        Err(_) if value.is_empty() => {
+                            let previous = self.page;
+                            self.page = 0;
+
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::page(previous, self.page);
+                                let msg = on_action(action);
+                                shell.publish(msg);
+                            }
+                        }
                         Err(_) => {}
                     }
 
@@ -2642,8 +2865,16 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     .expect("Widget Update: missing paginations: Next");
 
                 if cursor.is_over(next.bounds()) && self.page < table.pages_end() {
+                    let previous = self.page;
                     self.page += 1;
                     self.goto_input.1 = (self.page + 1).to_string();
+
+                    if let Some(on_action) = table.on_action.as_ref() {
+                        let action = Action::page(previous, self.page);
+                        let msg = on_action(action);
+                        shell.publish(msg);
+                    }
+
                     shell.invalidate_layout();
                     return event::Status::Captured;
                 }
@@ -2746,7 +2977,15 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                             let (_, page) = &self.goto_input;
                             match page.parse::<usize>() {
                                 Ok(page) => {
+                                    let previous = self.page;
                                     self.page = usize::clamp(page - 1, 0, table.pages_end());
+                                    if previous != self.page {
+                                        if let Some(on_action) = table.on_action.as_ref() {
+                                            let action = Action::page(previous, self.page);
+                                            let msg = on_action(action);
+                                            shell.publish(msg);
+                                        }
+                                    }
                                     shell.invalidate_layout();
                                     return event::Status::Captured;
                                 }
@@ -2840,7 +3079,19 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
                         if let Ok(page) = value.parse::<usize>() {
                             let page = if page == 0 { 0 } else { page - 1 };
+
+                            let previous = self.page;
+
                             self.page = usize::clamp(page, 0, table.pages_end());
+
+                            if previous != self.page {
+                                if let Some(on_action) = table.on_action.as_ref() {
+                                    let action = Action::page(previous, self.page);
+                                    let msg = on_action(action);
+                                    shell.publish(msg);
+                                }
+                            }
+
                             self.reset();
                             shell.invalidate_layout();
                             return event::Status::Captured;
@@ -2929,6 +3180,8 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
         let padding = table.padding;
         let spacing = table.spacing;
 
+        self.cursor_position = cursor.position_over(layout.bounds());
+
         let bounds = layout.bounds();
         let mut children = layout.children();
 
@@ -3013,16 +3266,18 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                         ..
                     }) => {
                         if is_header {
-                            if let Some(callback) = table.on_header_submit.as_ref() {
-                                let msg = callback(value, index);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::header_submit(value, index);
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
                         } else {
                             let (row, column) =
                                 (index % table.page_limit, index / table.page_limit);
 
-                            if let Some(callback) = table.on_cell_submit.as_ref() {
-                                let msg = callback(value, row, column);
+                            if let Some(on_action) = table.on_action.as_ref() {
+                                let action = Action::cell_submit(value, column, row);
+                                let msg = on_action(action);
                                 shell.publish(msg);
                             }
                         }
@@ -3042,6 +3297,20 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
             | Event::Touch(touch::Event::FingerLost { .. }) => {
                 self.is_text_dragging = false;
                 self.reset_resizing();
+
+                if let Some(motion) = self.motion.take() {
+                    if let Some(selection) = self.selection.as_mut() {
+                        selection.update(motion)
+                    }
+
+                    if let Some(on_action) = table.on_action.as_ref() {
+                        self.swap_dimensions(motion, table.page_limit);
+                        let msg = on_action(Action::MoveSelection(motion));
+                        shell.publish(msg);
+
+                        return event::Status::Captured;
+                    }
+                }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Touch(touch::Event::FingerMoved { .. })
@@ -3086,6 +3355,41 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     }
                     None => {}
                 }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+            | Event::Touch(touch::Event::FingerMoved { .. })
+                if self.motion.is_some() =>
+            {
+                let mut cells_children = cells.children();
+                let numbering = cells_children
+                    .next()
+                    .expect("Widget Update: Missing numbering cells");
+                let headers = cells_children
+                    .next()
+                    .expect("Widget Update: Missing header cells");
+
+                let scroll_bounds = {
+                    let diff = padding.vertical()
+                        + pagination.bounds().height.max(goto.bounds().height)
+                        + if table.multiple_pages() { spacing } else { 0.0 }
+                        + status.bounds().height
+                        + spacing
+                        + headers.bounds().height;
+
+                    let height = bounds.height - diff;
+                    let width = bounds.width - padding.horizontal() - numbering.bounds().width;
+
+                    Size::new(width, height)
+                };
+                return self.update_cells(
+                    table,
+                    renderer,
+                    event,
+                    cells,
+                    cursor,
+                    shell,
+                    scroll_bounds,
+                );
             }
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Touch(touch::Event::FingerMoved { .. })
@@ -3156,12 +3460,14 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                 shell.invalidate_layout();
                 return event::Status::Captured;
             }
+
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key,
                 modifiers,
                 text,
                 ..
             }) if self.editing.is_none() && cursor.is_over(layout.bounds()) => {
+                // todo!() Change cursor bounds check to widget focus check
                 if let Some(callback) = table.on_keypress.as_ref() {
                     let msg = callback(KeyPress {
                         key: key.clone(),
@@ -3185,12 +3491,17 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     {
                         selection.grow(
                             0,
-                            table.page_limit.saturating_sub(1),
+                            table.rows.saturating_sub(1),
                             1,
                             table.cols.saturating_sub(1),
                         );
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
+                        selection.move_right(table.cols.saturating_sub(1))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Enter)
+                        if self.keyboard_modifiers.shift() =>
+                    {
                         selection.move_right(table.cols.saturating_sub(1))
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft)
@@ -3204,14 +3515,14 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     {
                         selection.grow(
                             1,
-                            table.page_limit.saturating_sub(1),
+                            table.rows.saturating_sub(1),
                             0,
                             table.cols.saturating_sub(1),
                         );
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown)
                     | keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                        selection.move_down(table.page_limit.saturating_sub(1))
+                        selection.move_down(table.rows.saturating_sub(1))
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp)
                         if self.keyboard_modifiers.shift() =>
@@ -3222,8 +3533,9 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
                     _ => return event::Status::Ignored,
                 }
 
-                if let Some(callback) = table.on_selection.as_ref() {
-                    let msg = callback(selection.clone());
+                if let Some(on_action) = table.on_action.as_ref() {
+                    let action = Action::Selection(selection.clone());
+                    let msg = on_action(action);
                     shell.publish(msg);
                 }
                 return event::Status::Captured;
@@ -3301,21 +3613,54 @@ impl<Renderer: text::Renderer + advanced::Renderer> State<Renderer> {
 
         event::Status::Ignored
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-struct Focus {
-    updated_at: Instant,
-    now: Instant,
-    is_window_focused: bool,
-}
+    pub fn overlay<'a, Raw: RawTable, Message, Theme: Catalog>(
+        &'a self,
+        table: &'a Table<'_, Raw, Message, Theme, Renderer>,
+        layout: layout::Layout<'_>,
+        _renderer: &Renderer,
+        translation: iced::Vector,
+    ) -> Option<advanced::overlay::Element<'a, Message, Theme, Renderer>> {
+        let motion = self.motion.as_ref()?;
 
-#[derive(Debug, Clone)]
-enum Editing {
-    Goto(Rectangle),
-    Cell {
-        index: usize,
-        value: String,
-        is_header: bool,
-    },
+        let is_row = motion.is_row();
+
+        let translation = Vector::new(1.0, 1.0) + translation;
+
+        let cells = layout
+            .children()
+            .next()
+            .expect("Table Overlay: Missing cells layout");
+        let mut children = cells.children();
+
+        let _numbering = children.next();
+        let _headers = children.next();
+
+        let cells = children
+            .next()
+            .expect("Table Overlay: Missing cells layout")
+            .children()
+            .zip(self.cells.iter())
+            .enumerate()
+            .filter_map(|(idx, (layout, cell))| {
+                let (row, column) = (idx % table.page_limit, idx / table.page_limit);
+                let row = row + (self.page * table.page_limit);
+                if motion.contains(row, column) {
+                    Some((layout.bounds(), cell, row))
+                } else {
+                    None
+                }
+            });
+
+        let cursor_position = self.cursor_position?;
+        let overlay = Overlay::new(
+            cells,
+            cursor_position + translation,
+            is_row,
+            table.cell_padding,
+            &table.class,
+        );
+
+        Some(advanced::overlay::Element::new(Box::new(overlay)))
+    }
 }
