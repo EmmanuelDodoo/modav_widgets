@@ -1745,6 +1745,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lilt"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f67562e5eff6b20553fa9be1c503356768420994e28f67e3eafe6f41910e57ad"
+dependencies = [
+ "web-time",
+]
+
+[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3279,6 +3288,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "lilt",
+]
+
+[[package]]
 name = "ttf-parser"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3738,8 +3755,10 @@ version = "0.1.0"
 dependencies = [
  "highlighter",
  "iced",
+ "lilt",
  "modav_core",
  "table",
+ "tree",
 ]
 
 [[package]]

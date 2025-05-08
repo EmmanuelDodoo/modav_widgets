@@ -13,6 +13,7 @@ pub mod menu {
         Size, Theme, Vector,
     };
 
+    #[allow(unused_imports)]
     pub use context::Context;
     pub use items::Item;
     pub use sections::Section;
