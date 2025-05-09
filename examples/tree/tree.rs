@@ -1,16 +1,19 @@
 use iced::{
     alignment::Horizontal,
     application, font,
-    widget::{button, column, container, focus_next, focus_previous, row, text},
-    Element, Font, Length, Task, Theme,
+    widget::{self, button, column, container, row, text},
+    Element, Font, Length, Size, Task, Theme,
 };
 
+use std::iter::once;
+
 use lilt::Easing;
-use tree::*;
+use tree::{base::*, Tree};
 
 fn main() -> iced::Result {
     application("Playground", App::update, App::view)
         .theme(App::theme)
+        .window_size(Size::new(1200.0, 900.0))
         .run_with(|| {
             let task = font::load(include_bytes!("./fontello.ttf")).map(Message::FontLoading);
             (App::new(), task)
@@ -20,14 +23,16 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     FontLoading(Result<(), font::Error>),
+    Button,
+    None,
     Light,
     Dark,
-    Next,
-    Prev,
+    Input(String),
 }
 
 struct App {
     theme: Theme,
+    input: String,
 }
 
 impl Default for App {
@@ -40,6 +45,7 @@ impl App {
     fn new() -> Self {
         Self {
             theme: Theme::TokyoNightStorm,
+            input: String::from("Maybe a text input??"),
         }
     }
 
@@ -54,17 +60,20 @@ impl App {
             Message::FontLoading(Err(error)) => {
                 eprintln!("{error:?}")
             }
-            Message::Next => return focus_next(),
-            Message::Prev => return focus_previous(),
+            Message::Button => {
+                println!("Clicked a button!");
+            }
             Message::FontLoading(_) => {}
+            Message::Input(string) => {
+                self.input = string;
+            }
+            Message::None => {}
         };
 
         Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let text = text("Some Temporary Text");
-
         let btns = row!(
             button("Light").on_press(Message::Light),
             button("Dark").on_press(Message::Dark),
@@ -75,27 +84,73 @@ impl App {
             font: Font::with_name("fontello"),
             code_point: '\u{F0F6}',
             size: None,
-            spacing: 10.0,
+            spacing: 5.0,
         };
 
-        let subs = (0..3).map(|i| {
-            let subs = (0..i).map(|i| Tree::new(format!("Sub-sub {i}")).icon(icon));
+        let base = {
+            let with_icon = Tree::new(Base::new("Base widget with icon").icon(icon));
 
-            Tree::with_children(format!("Sub Tree {i}"), subs)
-                .animation_easing(Easing::EaseInOutQuad)
-        });
+            Tree::with_children(Base::new("Base widget"), std::iter::once(with_icon))
+        };
 
-        let tree = Tree::with_children("Test tree".to_owned(), subs)
-            .icon(icon)
-            .width(200.0);
+        let text = {
+            let subs = ["more", "text"].into_iter().map(Tree::new);
 
-        let focs = row!(
-            button("Prev").on_press(Message::Prev),
-            button("Next").on_press(Message::Next)
-        )
-        .spacing(20.0);
+            Tree::with_children(text("With text widget").center(), subs).width(150)
+        };
 
-        let content = column!(btns, tree, text, focs)
+        let buttons = {
+            let one = Tree::new(button("Click me!").on_press(Message::Button));
+
+            Tree::with_children(
+                button("Some buttons as well").on_press(Message::None),
+                once(one),
+            )
+        };
+
+        let input = {
+            let tooltip = widget::tooltip(
+                "With a tooltip",
+                "awesome iced",
+                widget::tooltip::Position::Right,
+            );
+            Tree::with_children(
+                widget::text_input("", &self.input).on_input(Message::Input),
+                once(tooltip).map(Tree::new),
+            )
+            .width(200.0)
+        };
+
+        let animations = {
+            let subs = (1..3).into_iter().map(|i| {
+                let duration = (300 * i) as f32;
+                let sub = Tree::new(Base::new("Empty section").icon(icon));
+                let text = Base::new(format!("{}ms Duration", duration));
+
+                Tree::with_children(text, once(sub)).animation_duration(duration)
+            });
+
+            Tree::with_children("Varying animation durations", subs)
+        };
+
+        let easings = {
+            let easings = [Easing::EaseInOutQuad, Easing::EaseInOutExpo]
+                .into_iter()
+                .map(|easing| {
+                    let base = Base::new(format!("{easing:?}"));
+                    Tree::with_children(base, once(Tree::new("Empty"))).animation_easing(easing)
+                });
+
+            Tree::with_children("Varying easing functions", easings)
+        };
+
+        let subs = [base, text, buttons, input, animations, easings].into_iter();
+        let root = Base::new("Tree widget").align_x(Horizontal::Center);
+        let tree = Tree::with_children(root, subs)
+            .width(300.0)
+            .animation_duration(500.0);
+
+        let content = column!(btns, tree, widget::text("All this and much more..."))
             .align_x(Horizontal::Center)
             .spacing(15.0)
             .width(Length::Fill)

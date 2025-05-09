@@ -9,6 +9,7 @@
 //! - ArrowUp: Moves the current selection `up`, expanding collapsed sections.
 //! - Enter: Toggles collapse on the current selection.
 
+pub mod base;
 mod style;
 mod tree;
 
