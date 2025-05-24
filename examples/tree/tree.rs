@@ -90,13 +90,19 @@ impl App {
         let base = {
             let with_icon = Tree::new(Base::new("Base widget with icon").icon(icon));
 
-            Tree::with_children(Base::new("Base widget"), std::iter::once(with_icon))
+            Tree::with_children(
+                Base::new("With false `collapse_on_click`"),
+                std::iter::once(with_icon),
+            )
+            .collapse_on_click(false)
         };
 
         let text = {
             let subs = ["more", "text"].into_iter().map(Tree::new);
 
-            Tree::with_children(text("With text widget").center(), subs).width(150)
+            Tree::with_children(text("With text widget").center(), subs)
+                .width(150)
+                .collapse_on_click(true)
         };
 
         let buttons = {

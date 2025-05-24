@@ -32,6 +32,7 @@ where
     duration: f32,
     class: Theme::Class<'a>,
     collapsed: bool,
+    collapse_on_click: bool,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
 }
 
@@ -67,7 +68,14 @@ where
             collapsed: false,
             on_action: None,
             class: Theme::default(),
+            collapse_on_click: true,
         }
+    }
+
+    /// Adds a sub-tree to the [`Tree`].  
+    pub fn push_child(mut self, child: Self) -> Self {
+        self.children.push(child.into());
+        self
     }
 
     /// Sets the width of the [`Tree`].
@@ -91,6 +99,15 @@ where
     /// Sets the gap between subtrees in the [`Tree`].
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = gap;
+        self
+    }
+
+    /// Sets the collapsing behavior of the [`Tree`].
+    ///
+    /// When set to true, the [`Tree`] collapses when clicked on regardless of
+    /// its prior selection state.
+    pub fn collapse_on_click(mut self, collapse: bool) -> Self {
+        self.collapse_on_click = collapse;
         self
     }
 
@@ -462,17 +479,24 @@ where
                     };
                 }
 
+                let can_collapse = self.collapse_on_click || state.is_selected;
+
                 if cursor.is_over(root.bounds()) {
-                    state.collapsed = !state.collapsed;
                     state.is_dirty = true;
                     state.is_selected = true;
                     state.tab = 0;
+                    if can_collapse {
+                        state.collapsed = !state.collapsed;
+                    }
 
                     if let Some(on_action) = self.on_action.as_ref() {
-                        let msg = on_action(Action::Collapsed(state.collapsed));
+                        if can_collapse {
+                            let msg = on_action(Action::Collapsed(state.collapsed));
+                            shell.publish(msg);
+                        }
+
                         let msg2 = on_action(Action::Selected(state.is_selected));
 
-                        shell.publish(msg);
                         shell.publish(msg2);
                     }
 
@@ -482,16 +506,20 @@ where
                 }
 
                 if cursor.is_over(stem.bounds()) {
-                    state.collapsed = !state.collapsed;
                     state.is_dirty = true;
                     state.is_selected = true;
                     state.tab = 0;
+                    if can_collapse {
+                        state.collapsed = !state.collapsed;
+                    }
 
                     if let Some(on_action) = self.on_action.as_ref() {
-                        let msg = on_action(Action::Collapsed(state.collapsed));
+                        if can_collapse {
+                            let msg = on_action(Action::Collapsed(state.collapsed));
+                            shell.publish(msg);
+                        }
                         let msg2 = on_action(Action::Selected(state.is_selected));
 
-                        shell.publish(msg);
                         shell.publish(msg2);
                     }
                     shell.request_redraw(window::RedrawRequest::NextFrame);
