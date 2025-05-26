@@ -617,7 +617,7 @@ where
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: Key::Named(Named::ArrowUp),
                 ..
-            }) => {
+            }) if state.focused => {
                 let _links = children.next();
 
                 let subtrees = children
@@ -668,7 +668,7 @@ where
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Enter),
                 ..
-            }) => {
+            }) if state.focused => {
                 let _links = children.next();
                 if !state.collapsed {
                     if let (tab, event::Status::Captured) = propagate(children.next(), shell) {
